@@ -2,28 +2,60 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 )
 
+const (
+	defaultPort         = "8080"
+	defaultMaxUploadMB  = 50
+	defaultMaxWorkers   = 10
+	defaultQueueSize    = 100
+	defaultReadTimeout  = 30
+	defaultWriteTimeout = 30
+)
+
+// pdfiumWorkerName is the binary the pool spawns. It lives next to the server
+// binary in both the local build and the container image.
+const pdfiumWorkerName = "pdfium-worker"
+
 type Config struct {
-	Port         string
-	MaxUploadMB  int
-	MaxWorkers   int
-	QueueSize    int
-	ReadTimeout  int // seconds
-	WriteTimeout int // seconds
+	Port             string
+	MaxUploadMB      int
+	MaxWorkers       int
+	QueueSize        int
+	ReadTimeout      int // seconds
+	WriteTimeout     int // seconds
+	PdfiumWorkerPath string
 }
 
 func Load() *Config {
-	cfg := &Config{
-		Port:         getEnv("PORT", "8080"),
-		MaxUploadMB:  getEnvInt("MAX_UPLOAD_MB", 50),
-		MaxWorkers:   getEnvInt("MAX_WORKERS", 10),
-		QueueSize:    getEnvInt("QUEUE_SIZE", 100),
-		ReadTimeout:  getEnvInt("READ_TIMEOUT", 30),
-		WriteTimeout: getEnvInt("WRITE_TIMEOUT", 30),
+	return &Config{
+		Port:             getEnv("PORT", defaultPort),
+		MaxUploadMB:      getEnvInt("MAX_UPLOAD_MB", defaultMaxUploadMB),
+		MaxWorkers:       getEnvInt("MAX_WORKERS", defaultMaxWorkers),
+		QueueSize:        getEnvInt("QUEUE_SIZE", defaultQueueSize),
+		ReadTimeout:      getEnvInt("READ_TIMEOUT", defaultReadTimeout),
+		WriteTimeout:     getEnvInt("WRITE_TIMEOUT", defaultWriteTimeout),
+		PdfiumWorkerPath: getEnv("PDFIUM_WORKER_PATH", defaultWorkerPath(currentExecutable(), pdfiumWorkerName)),
 	}
-	return cfg
+}
+
+// defaultWorkerPath resolves the worker to a sibling of the server binary so a
+// plain build produces a runnable pair with no extra configuration.
+func defaultWorkerPath(execPath, workerName string) string {
+	if dir := filepath.Dir(execPath); dir != "" && dir != "." {
+		return filepath.Join(dir, workerName)
+	}
+	return workerName
+}
+
+func currentExecutable() string {
+	execPath, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return execPath
 }
 
 func getEnv(key, def string) string {
