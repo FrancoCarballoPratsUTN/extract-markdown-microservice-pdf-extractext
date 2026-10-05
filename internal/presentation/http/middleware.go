@@ -1,8 +1,10 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
 )
@@ -31,7 +33,19 @@ func (m *AdmissionMiddleware) Middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		default:
 			domain.WriteProblem(w, domain.NewProblem(http.StatusServiceUnavailable, "Service Unavailable", "server is saturated"))
-			return
 		}
 	})
+}
+
+// WithDeadline gives every request a context deadline of timeout. A queued
+// extraction is bounded by that deadline instead of running until the client
+// disconnects, which keeps the queue draining predictably under saturation.
+func WithDeadline(timeout time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+			defer cancel()
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }

@@ -1,11 +1,11 @@
 package http
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"mime"
 	"net/http"
-	"strings"
 )
 
 const pdfFormField = "file"
@@ -70,7 +70,7 @@ func readLimited(r io.Reader, maxBytes int64) ([]byte, error) {
 	if int64(len(data)) > maxBytes {
 		return nil, ErrPayloadTooLarge
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
+	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, ErrMissingFile
 	}
 	return data, nil
