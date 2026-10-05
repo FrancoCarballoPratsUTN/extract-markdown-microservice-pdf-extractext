@@ -188,14 +188,14 @@ Those four come from the curl harness at low concurrency. The number that counts
 is k6 on the exact enunciado profile, run against the shipped
 `MAX_WORKERS=2` / `QUEUE_SIZE=56` tuning:
 
-| Metric | Professor | Ours | |
+| Métrica | Mínimas | Ours | |
 | --- | ---: | ---: | --- |
 | Throughput | 25.35 req/s | **29.15 req/s** | **+15.0%** |
-| Errors | 0.00% | **0.00%** (0 of 6 runs) | equal |
-| p50 | 1.88 s | 2.50 s | 1.3x worse |
-| p90 | 7.83 s | **4.62 s** | **1.7x better** |
-| p95 | 8.80 s | **4.97 s** | **1.8x better** |
-| Max | 13.94 s | **6.18 s** | **2.3x better** |
+| Errores | 0.00% | **0.00%** (0 de 6 corridas) | igual |
+| p50 | 1.88 s | 2.50 s | 1.3x peor |
+| p90 | 7.83 s | **4.62 s** | **1.7x mejor** |
+| p95 | 8.80 s | **4.97 s** | **1.8x mejor** |
+| Máximo | 13.94 s | **6.18 s** | **2.3x mejor** |
 
 Median of 6 runs. Throughput ranged 28.00-30.99 req/s between blocks as host load
 moved, so read it as "~29 req/s" rather than the best case. Errors were zero in
