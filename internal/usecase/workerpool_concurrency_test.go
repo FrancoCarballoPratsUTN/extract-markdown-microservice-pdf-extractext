@@ -8,7 +8,7 @@ import (
 // Each caller must receive the result of the job it submitted, never another
 // caller's result.
 func TestConcurrentSubmittersEachReceiveTheirOwnResult(t *testing.T) {
-	wp := NewWorkerPool(&slowExtractor{}, 4, 8)
+	wp := NewWorkerPool(&slowExtractor{}, 4, 8, 1<<20)
 	defer wp.Close()
 
 	first, err := wp.Submit([]byte("alpha"))

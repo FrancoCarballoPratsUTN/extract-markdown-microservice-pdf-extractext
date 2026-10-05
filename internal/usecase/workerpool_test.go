@@ -20,7 +20,7 @@ type ctxKey struct{}
 
 func TestWorkerPoolProcessesJob(t *testing.T) {
 	uc := NewExtractUsecase(&mockExtractor{content: "hi", pageCount: 1})
-	wp := NewWorkerPool(uc, 2, 10)
+	wp := NewWorkerPool(uc, 2, 10, 1<<20)
 	defer wp.Close()
 
 	ch, err := wp.Submit([]byte("hi"))
@@ -44,7 +44,7 @@ func TestWorkerPoolProcessesJob(t *testing.T) {
 
 func TestWorkerPoolQueueFullWhenNoSpace(t *testing.T) {
 	// workers 1, queue 1 - fill both: 1 job processing + 1 queued = full
-	wp := NewWorkerPool(&slowExtractor{}, 1, 1)
+	wp := NewWorkerPool(&slowExtractor{}, 1, 1, 1<<20)
 	defer wp.Close()
 
 	// First job: sent to buffer/worker
