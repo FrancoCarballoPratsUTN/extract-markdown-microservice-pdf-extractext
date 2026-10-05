@@ -5,18 +5,24 @@ import (
 	"errors"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
-	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/infrastructure/pdf"
 )
+
+// Extractor is the port this business layer depends on. It is declared here, on
+// the consumer side, so the dependency points inward: the infrastructure layer
+// implements it without the business layer ever importing an adapter.
+type Extractor interface {
+	Extract(ctx context.Context, data []byte) (content string, pageCount int, err error)
+}
 
 type ExtractUsecase interface {
 	Extract(ctx context.Context, data []byte) (domain.ExtractResponse, error)
 }
 
 type extractUsecase struct {
-	extractor pdf.Extractor
+	extractor Extractor
 }
 
-func NewExtractUsecase(extractor pdf.Extractor) ExtractUsecase {
+func NewExtractUsecase(extractor Extractor) ExtractUsecase {
 	return &extractUsecase{extractor: extractor}
 }
 

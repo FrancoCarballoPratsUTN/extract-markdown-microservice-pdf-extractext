@@ -116,7 +116,7 @@
 **Verification:**
 - [x] Unit tests with mocks for extractor
 - [x] Tests cover error cases
-- [ ] `go test ./...` passes
+- [x] `go test ./...` passes
 
 **Dependencies:** Task 5
 **Files likely touched:** internal/usecase/extract.go, internal/usecase/extract_test.go
@@ -150,16 +150,16 @@
 ### Task 8: HTTP handlers for POST /extract
 **Description:** Implement handler for POST /extract accepting multipart/form-data or binary body as per spec. Return 200 OK with JSON. Use RFC 9457 for error responses.
 **Acceptance criteria:**
-- [ ] Handler reads PDF from multipart form field (e.g., "file") or from request body if content-type is application/pdf
-- [ ] Enforces max upload size
-- [ ] Calls usecase and returns JSON with status 200 on success
-- [ ] Proper error responses using RFC 9457 Problem Details (400 for bad request, 413 if too large, 500 for extraction errors, 503/429 for saturated)
-- [ ] Logs to stdout (JSON or structured)
+- [x] Handler reads PDF from multipart form field (e.g., "file") or from request body if content-type is application/pdf
+- [x] Enforces max upload size
+- [x] Calls usecase and returns JSON with status 200 on success
+- [x] Proper error responses using RFC 9457 Problem Details (400 for bad request, 413 if too large, 500 for extraction errors, 503/429 for saturated)
+- [x] Logs to stdout (JSON or structured)
 
 **Verification:**
-- [ ] Manual test with curl against sample PDF
-- [ ] Returns correct JSON structure
-- [ ] `go test ./...` passes
+- [x] Manual test with curl against sample PDF
+- [x] Returns correct JSON structure
+- [x] `go test ./...` passes
 
 **Dependencies:** Task 7
 **Files likely touched:** internal/presentation/http/handler.go, internal/presentation/http/handler_test.go
@@ -168,16 +168,16 @@
 ### Task 9: Middleware for backpressure (semaphore + limits)
 **Description:** Implement early backpressure - semaphore before reading body to reject when saturated. Configure worker limits.
 **Acceptance criteria:**
-- [ ] Semaphore-based admission control (max concurrent workers from config)
-- [ ] Reject with 503 Service Unavailable when saturated (as per spec guidance)
-- [ ] Max body size limit enforced
-- [ ] Queue size/bounded behavior to prevent memory overflow
-- [ ] Early rejection before full body read where possible
+- [x] Semaphore-based admission control (max concurrent workers from config)
+- [x] Reject with 503 Service Unavailable when saturated (as per spec guidance)
+- [x] Max body size limit enforced
+- [x] Queue size/bounded behavior to prevent memory overflow
+- [x] Early rejection before full body read where possible
 
 **Verification:**
-- [ ] Behavior tested under simulated saturation
-- [ ] Returns 503 when at capacity
-- [ ] No memory leaks under load
+- [x] Behavior tested under simulated saturation
+- [x] Returns 503 when at capacity
+- [x] No memory leaks under load
 
 **Dependencies:** Task 3, Task 8
 **Files likely touched:** internal/presentation/http/middleware.go, internal/presentation/http/middleware_test.go
@@ -186,17 +186,17 @@
 ### Task 9b: Worker pool for extraction processing
 **Description:** Implement bounded worker pool to separate HTTP runtime from extraction work (cátedra requirement 4). Prevents blocking HTTP handlers during CPU-intensive PDF extraction.
 **Acceptance criteria:**
-- [ ] Worker pool with configurable max workers and queue size
-- [ ] Jobs submitted to pool; results returned via channels with timeout
-- [ ] Queue full -> return 503 with proper backpressure
-- [ ] Clean shutdown of workers
-- [ ] Non-blocking admission control integrated with semaphore
+- [x] Worker pool with configurable max workers and queue size
+- [x] Jobs submitted to pool; results returned via channels with timeout
+- [x] Queue full -> return 503 with proper backpressure
+- [x] Clean shutdown of workers
+- [x] Non-blocking admission control integrated with semaphore
 
 **Verification:**
-- [ ] Pool processes jobs correctly
-- [ ] Queue bounds respected (reject when full)
-- [ ] Graceful shutdown works
-- [ ] `go test ./...` passes
+- [x] Pool processes jobs correctly
+- [x] Queue bounds respected (reject when full)
+- [x] Graceful shutdown works
+- [x] `go test ./...` passes
 
 **Dependencies:** Task 6, Task 9
 **Files likely touched:** internal/usecase/workerpool.go, internal/usecase/workerpool_test.go
@@ -205,16 +205,16 @@
 ### Task 10: Server setup and graceful shutdown
 **Description:** Wire up server with routing, timeouts, graceful shutdown, config injection.
 **Acceptance criteria:**
-- [ ] `cmd/server/main.go` initializes all layers with DI
-- [ ] Router (chi or stdlib) mounts POST /extract
-- [ ] Read/write timeouts from config
-- [ ] Graceful shutdown on SIGTERM/SIGINT
-- [ ] Listens on PORT env var (default 8080)
-- [ ] Stateless, 12-Factor compliant
+- [x] `cmd/server/main.go` initializes all layers with DI
+- [x] Router (chi or stdlib) mounts POST /extract
+- [x] Read/write timeouts from config
+- [x] Graceful shutdown on SIGTERM/SIGINT
+- [x] Listens on PORT env var (default 8080)
+- [x] Stateless, 12-Factor compliant
 
 **Verification:**
-- [ ] Server starts successfully
-- [ ] Graceful shutdown tested
+- [x] Server starts successfully
+- [x] Graceful shutdown tested
 - [x] `go build ./...` passes
 
 **Dependencies:** Task 9
@@ -223,7 +223,7 @@
 
 ## Checkpoint: HTTP Layer
 - [ ] Tasks 8-10 complete
-- [ ] End-to-end test: curl POST /extract with PDF returns 200 + JSON
+- [x] End-to-end test: curl POST /extract with PDF returns 200 + JSON
 - [ ] Backpressure returns 503 when saturated
 - [ ] All tests pass
 
@@ -239,8 +239,8 @@
 - [ ] Healthcheck if appropriate
 
 **Verification:**
-- [ ] `docker build -t pdf-extract-md:latest .` succeeds
-- [ ] Container runs and responds to requests
+- [x] `docker build -t pdf-extract-md:latest .` succeeds
+- [x] Container runs and responds to requests
 
 **Dependencies:** Task 10
 **Files likely touched:** Dockerfile
@@ -257,8 +257,8 @@
 - [ ] Restart policy defined
 
 **Verification:**
-- [ ] `docker-compose config` validates
-- [ ] `docker-compose up --scale app=5` starts (structure valid)
+- [x] `docker-compose config` validates
+- [x] `docker-compose up --scale app=5` starts (structure valid)
 
 **Dependencies:** Task 11
 **Files likely touched:** docker-compose.yml
@@ -273,8 +273,8 @@
 - [ ] Load balancing across replicas functional
 
 **Verification:**
-- [ ] Routing tested conceptually via compose config
-- [ ] Traefik dashboard accessible if configured (optional)
+- [x] Routing tested conceptually via compose config
+- [x] Traefik dashboard accessible if configured (optional)
 
 **Dependencies:** Task 12
 **Files likely touched:** docker-compose.yml (may extend), traefik.yml optional
@@ -296,8 +296,8 @@
 - [ ] Includes proper setup and thresholds
 
 **Verification:**
-- [ ] Script syntax valid
-- [ ] Documented how to run
+- [x] Script syntax valid
+- [x] Documented how to run
 
 **Dependencies:** Task 10
 **Files likely touched:** scripts/k6/spike.js
@@ -312,8 +312,8 @@
 - [ ] Results reporting (report, plot optional)
 
 **Verification:**
-- [ ] Script is executable and documented
-- [ ] Targets correct endpoint format
+- [x] Script is executable and documented
+- [x] Targets correct endpoint format
 
 **Dependencies:** Task 10
 **Files likely touched:** scripts/vegeta/attack.sh, scripts/vegeta/targets.txt (or inline)
@@ -322,15 +322,15 @@
 ### Task 16: Technical documentation (README + guide)
 **Description:** Create comprehensive technical guide with architecture justification, bottleneck analysis, deployment commands.
 **Acceptance criteria:**
-- [ ] Update README.md with overview, API spec, build/run instructions
-- [ ] Create `docs/architecture.md` or technical guide covering 3-layer, SOLID/KISS/YAGNI, backpressure rationale
-- [ ] Bottleneck analysis (queue saturation, memory, I/O)
-- [ ] Deployment commands (docker-compose up, scaling)
-- [ ] k6/Vegeta usage instructions
+- [x] Update README.md with overview, API spec, build/run instructions
+- [x] Create technical guide covering 3-layer, SOLID/KISS/YAGNI, backpressure rationale
+- [x] Bottleneck analysis (queue saturation, memory, I/O)
+- [x] Deployment commands (docker-compose up, scaling)
+- [x] k6/Vegeta usage instructions
 
 **Verification:**
 - [ ] Documentation complete and accurate
-- [ ] Commands tested
+- [x] Commands tested
 
 **Dependencies:** Tasks 11-15
 **Files likely touched:** README.md, docs/technical-guide.md (or ARCHITECTURE.md)
@@ -339,7 +339,7 @@
 ## Checkpoint: Complete
 - [ ] All tasks 1-16 complete
 - [x] `go build ./...` passes
-- [ ] `go test ./...` passes
+- [x] `go test ./...` passes
 - [ ] Docker builds successfully
 - [ ] All scripts present
 - [ ] Documentation complete
