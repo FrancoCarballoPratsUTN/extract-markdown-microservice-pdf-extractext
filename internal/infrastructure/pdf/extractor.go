@@ -1,75 +1,101 @@
 package pdf
 
 import (
-	"bytes"
-	"fmt"
+	"context"
+	"strings"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
 	"github.com/klippa-app/go-pdfium"
+	"github.com/klippa-app/go-pdfium/references"
 	"github.com/klippa-app/go-pdfium/requests"
 )
 
 type Extractor interface {
-	Extract(data []byte) (domain.ExtractResponse, error)
+	Extract(ctx context.Context, data []byte) (string, int, error)
 }
 
-type extractor struct {
+type pdfiumExtractor struct {
 	pool pdfium.Pool
 }
 
 func NewExtractor(pool pdfium.Pool) Extractor {
-	return &extractor{pool: pool}
+	return &pdfiumExtractor{pool: pool}
 }
 
-func (e *extractor) Extract(data []byte) (domain.ExtractResponse, error) {
+func (e *pdfiumExtractor) Extract(ctx context.Context, data []byte) (string, int, error) {
 	if len(data) == 0 {
-		return domain.ExtractResponse{}, domain.ErrInvalidPDF
+		return "", 0, domain.ErrInvalidPDF
 	}
 
-	pdfiumInstance, err := e.pool.GetInstance()
+	pdfiumInstance, err := e.pool.GetInstanceWithContext(ctx)
 	if err != nil {
-		return domain.ExtractResponse{}, fmt.Errorf("%w: %v", domain.ErrExtractionFailed, err)
+		return "", 0, domain.ErrExtractionFailed
 	}
-	defer e.pool.ReleaseInstance(pdfiumInstance)
+	defer pdfiumInstance.Close()
 
-	reader := bytes.NewReader(data)
-	openReq := &requests.OpenDocument{
-		FileReader: reader,
-	}
-
-	doc, err := pdfiumInstance.OpenDocument(openReq)
+	doc, err := pdfiumInstance.OpenDocument(&requests.OpenDocument{
+		File: &data,
+	})
 	if err != nil {
-		return domain.ExtractResponse{}, fmt.Errorf("%w: %v", domain.ErrInvalidPDF, err)
+		return "", 0, domain.ErrInvalidPDF
 	}
 	defer pdfiumInstance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{
 		Document: doc.Document,
 	})
 
-	pageCount, err := pdfiumInstance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{
+	pageCountResp, err := pdfiumInstance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{
 		Document: doc.Document,
 	})
 	if err != nil {
-		return domain.ExtractResponse{}, fmt.Errorf("%w: %v", domain.ErrExtractionFailed, err)
+		return "", 0, domain.ErrExtractionFailed
 	}
+	pageCount := pageCountResp.PageCount
 
-	var content bytes.Buffer
+	var builder strings.Builder
 	for i := 0; i < pageCount; i++ {
-		textReq := &requests.GetPageText{
-			Document: doc.Document,
-			Page:     i,
-		}
-		text, err := pdfiumInstance.GetPageText(textReq)
-		if err != nil {
-			return domain.ExtractResponse{}, fmt.Errorf("%w: %v", domain.ErrExtractionFailed, err)
-		}
-		content.WriteString(text.Text)
-		if i < pageCount-1 {
-			content.WriteString("\n\n")
+		pageText, _ := extractPageText(pdfiumInstance, doc.Document, i)
+		if pageText != "" {
+			builder.WriteString(pageText)
+			if i < pageCount-1 {
+				builder.WriteString("\n\n")
+			}
 		}
 	}
 
-	return domain.ExtractResponse{
-		Content:   content.String(),
-		PageCount: pageCount,
-	}, nil
+	return builder.String(), pageCount, nil
+}
+
+func extractPageText(inst pdfium.Pdfium, doc references.FPDF_DOCUMENT, pageIndex int) (string, error) {
+	textResp, err := inst.FPDFText_LoadPage(&requests.FPDFText_LoadPage{
+		Page: requests.Page{
+			ByIndex: &requests.PageByIndex{
+				Document: doc,
+				Index:    pageIndex,
+			},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	defer inst.FPDFText_ClosePage(&requests.FPDFText_ClosePage{
+		TextPage: textResp.TextPage,
+	})
+
+	charCountResp, err := inst.FPDFText_CountChars(&requests.FPDFText_CountChars{
+		TextPage: textResp.TextPage,
+	})
+	if err != nil || charCountResp.Count <= 0 {
+		return "", nil
+	}
+
+	getResp, err := inst.FPDFText_GetText(&requests.FPDFText_GetText{
+		TextPage:   textResp.TextPage,
+		StartIndex: 0,
+		Count:      charCountResp.Count,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return getResp.Text, nil
 }

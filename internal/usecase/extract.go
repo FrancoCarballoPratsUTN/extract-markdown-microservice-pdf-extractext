@@ -1,30 +1,40 @@
 package usecase
 
 import (
+	"context"
+	"errors"
+
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/infrastructure/pdf"
 )
 
-type ExtractUseCase interface {
-	Extract(data []byte) (domain.ExtractResponse, error)
+type ExtractUsecase interface {
+	Extract(ctx context.Context, data []byte) (domain.ExtractResponse, error)
 }
 
-type extractUseCase struct {
+type extractUsecase struct {
 	extractor pdf.Extractor
 }
 
-func NewExtractUseCase(extractor pdf.Extractor) ExtractUseCase {
-	return &extractUseCase{extractor: extractor}
+func NewExtractUsecase(extractor pdf.Extractor) ExtractUsecase {
+	return &extractUsecase{extractor: extractor}
 }
 
-func (u *extractUseCase) Extract(data []byte) (domain.ExtractResponse, error) {
+func (uc *extractUsecase) Extract(ctx context.Context, data []byte) (domain.ExtractResponse, error) {
 	if len(data) == 0 {
 		return domain.ExtractResponse{}, domain.ErrInvalidPDF
 	}
 
-	resp, err := u.extractor.Extract(data)
+	content, pageCount, err := uc.extractor.Extract(ctx, data)
 	if err != nil {
-		return domain.ExtractResponse{}, err
+		if errors.Is(err, domain.ErrInvalidPDF) {
+			return domain.ExtractResponse{}, domain.ErrInvalidPDF
+		}
+		return domain.ExtractResponse{}, domain.ErrExtractionFailed
 	}
-	return resp, nil
+
+	return domain.ExtractResponse{
+		Content:   content,
+		PageCount: pageCount,
+	}, nil
 }
