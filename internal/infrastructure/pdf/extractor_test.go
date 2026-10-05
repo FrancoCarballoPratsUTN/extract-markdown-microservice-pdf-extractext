@@ -9,9 +9,6 @@ import (
 	"github.com/klippa-app/go-pdfium"
 )
 
-// pdfiumExtractor must satisfy the Extractor contract used by the usecase layer.
-var _ Extractor = (*pdfiumExtractor)(nil)
-
 // A nil pool must never be dereferenced: the usecase guards empty input before
 // reaching the infrastructure layer, and the extractor rejects it defensively.
 func TestExtractRejectsEmptyPayloadBeforeTouchingPool(t *testing.T) {

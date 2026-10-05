@@ -10,15 +10,14 @@ import (
 	"github.com/klippa-app/go-pdfium/requests"
 )
 
-type Extractor interface {
-	Extract(ctx context.Context, data []byte) (string, int, error)
-}
-
 type pdfiumExtractor struct {
 	pool pdfium.Pool
 }
 
-func NewExtractor(pool pdfium.Pool) Extractor {
+// NewExtractor returns the PDFium-backed adapter for the usecase.Extractor
+// port. The concrete type is returned so the business layer depends on the
+// port it declares rather than on this package.
+func NewExtractor(pool pdfium.Pool) *pdfiumExtractor {
 	return &pdfiumExtractor{pool: pool}
 }
 
