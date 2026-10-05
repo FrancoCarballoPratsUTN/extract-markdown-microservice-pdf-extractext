@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/config"
-	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/infrastructure/mupdf"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/infrastructure/pdf"
 	httppres "github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/presentation/http"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/usecase"
