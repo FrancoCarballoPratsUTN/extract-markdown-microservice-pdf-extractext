@@ -70,9 +70,6 @@ func main() {
 // benchmark compare them over HTTP without touching the business layer.
 func buildExtractor(cfg *config.Config) (usecase.Extractor, func(), error) {
 	switch cfg.Engine {
-	case "mupdf":
-		log.Printf("extractor: mupdf (in-process)")
-		return mupdf.NewExtractor(), func() {}, nil
 	case "pdfium", "":
 		pool, err := pdf.NewPool(pdf.PoolConfig{
 			WorkerPath: cfg.PdfiumWorkerPath,
@@ -84,6 +81,5 @@ func buildExtractor(cfg *config.Config) (usecase.Extractor, func(), error) {
 		}
 		return pdf.NewExtractor(pool), func() { _ = pool.Close() }, nil
 	default:
-		return nil, nil, fmt.Errorf("unknown EXTRACTOR_ENGINE %q, want pdfium or mupdf", cfg.Engine)
 	}
 }
