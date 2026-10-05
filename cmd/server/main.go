@@ -17,6 +17,18 @@ import (
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/usecase"
 )
 
+func buildExtractor(cfg *config.Config) (usecase.Extractor, func(), error) {
+	pool, err := pdf.NewPool(pdf.PoolConfig{
+		WorkerPath: cfg.PdfiumWorkerPath,
+		Workers:    cfg.MaxWorkers,
+		OnLogEvent: func(event string) { log.Printf("pdfium pool: %s", event) },
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("pdfium pool: %w", err)
+	}
+	return pdf.NewExtractor(pool), func() { _ = pool.Close() }, nil
+}
+
 func main() {
 	cfg := config.Load()
 
@@ -28,10 +40,6 @@ func main() {
 
 	uc := usecase.NewExtractUsecase(extractor)
 
-	// The queue absorbs bursts instead of rejecting them: workers size the CPU
-	// parallelism, and the queue holds what is waiting. Admitting one request
-	// per running job plus one per queue slot means the middleware rejects
-	// exactly when the pool itself has no room.
 	writeTimeout := time.Duration(cfg.WriteTimeout) * time.Second
 	jobs := usecase.NewWorkerPool(uc, cfg.MaxWorkers, cfg.QueueSize, int64(cfg.QueueMaxMB)<<20)
 	defer jobs.Close()
@@ -62,24 +70,5 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("shutdown error: %v", err)
-	}
-}
-
-// buildExtractor resolves EXTRACTOR_ENGINE to an adapter, plus the cleanup that
-// releases whatever that engine needs. Selecting the engine by name lets the
-// benchmark compare them over HTTP without touching the business layer.
-func buildExtractor(cfg *config.Config) (usecase.Extractor, func(), error) {
-	switch cfg.Engine {
-	case "pdfium", "":
-		pool, err := pdf.NewPool(pdf.PoolConfig{
-			WorkerPath: cfg.PdfiumWorkerPath,
-			Workers:    cfg.MaxWorkers,
-			OnLogEvent: func(event string) { log.Printf("pdfium pool: %s", event) },
-		})
-		if err != nil {
-			return nil, nil, fmt.Errorf("pdfium pool: %w", err)
-		}
-		return pdf.NewExtractor(pool), func() { _ = pool.Close() }, nil
-	default:
 	}
 }
