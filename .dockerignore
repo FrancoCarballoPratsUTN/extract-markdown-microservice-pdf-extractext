@@ -3,4 +3,8 @@
 bin/
 docs/
 *.bak
-README.md
+README.mdinternal/infrastructure/mupdf
+cmd/pdfium-worker
+cmd/benchmark
+internal/benchmark
+testdata/*.pdf
