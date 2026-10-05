@@ -1,0 +1,39 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    deploy:
+      replicas: 5
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    environment:
+      - PORT=8080
+      - MAX_UPLOAD_MB=50
+      - MAX_WORKERS=4
+      - QUEUE_SIZE=100
+      - READ_TIMEOUT=30
+      - WRITE_TIMEOUT=30
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=mired"
+      - "traefik.http.routers.extract.rule=Host(`extract.universidad.localhost`)"
+      - "traefik.http.routers.extract.entrypoints=https"
+      - "traefik.http.routers.extract.tls=true"
+      - "traefik.http.services.extract.loadbalancer.server.port=8080"
+    networks:
+      - mired
+    restart: unless-stopped
+
+# Routing is owned by the shared reverse proxy in ~/Documents/Services/traefik.
+# It listens on :80 and :443, forces :80 to redirect to :https, and serves the
+# mkcert certificate covering *.universidad.localhost, so this project attaches
+# through host-based routing on the https entrypoint instead of running its own.
+networks:
+  mired:
+    external: true
