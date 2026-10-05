@@ -5,7 +5,9 @@ go 1.26.0
 require github.com/klippa-app/go-pdfium v1.21.1
 
 require (
+	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/fatih/color v1.13.0 // indirect
+	github.com/gen2brain/go-fitz v1.28.2
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/go-hclog v1.6.3 // indirect
