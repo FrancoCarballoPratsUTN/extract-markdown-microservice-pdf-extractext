@@ -89,8 +89,10 @@ docker build --target test --build-arg PDFIUM_VERSION=7988 .
 | --- | --- | --- |
 | `PORT` | `8080` | Listen port |
 | `MAX_UPLOAD_MB` | `50` | Request body ceiling |
-| `MAX_WORKERS` | `10` | PDFium worker processes, and the admission limit |
-| `QUEUE_SIZE` | `100` | Bounded queue depth |
+| `MAX_WORKERS` | `2` | PDFium worker processes: the CPU parallelism |
+| `QUEUE_SIZE` | `56` | Bounded queue depth in front of the workers |
+| `EXTRACTOR_ENGINE` | `pdfium` | Extraction engine: `pdfium` or `mupdf` (see below) |
+| `QUEUE_MAX_MB` | `256` | Byte budget shared by running and queued jobs |
 | `READ_TIMEOUT` / `WRITE_TIMEOUT` | `30` | Seconds |
 | `PDFIUM_WORKER_PATH` | sibling of `server` | Worker binary location |
 
@@ -98,9 +100,16 @@ docker build --target test --build-arg PDFIUM_VERSION=7988 .
 the shipped layout needs no override. It exists so a local build can point at a
 binary outside `bin/`.
 
-`MAX_WORKERS` drives memory: each idle worker costs roughly 28 MB resident, so
-size it against the container's memory limit and CPU quota. On 1 CPU it should
-stay near `4`; see [Tuning `MAX_WORKERS`](#tuning-max_workers).
+`MAX_WORKERS` is sized against the CPU quota, not against memory: each replica
+has a hard `cpus: 1.0` limit, so workers past the second only split the same core
+and lengthen latency without adding throughput. Measured, `2` beat `4` and `4`
+beat `1`; see [Tuning the workers and the queue](#tuning-the-workers-and-the-queue).
+
+Admission is `MAX_WORKERS + QUEUE_SIZE` in-flight requests per replica, because
+that is exactly what the pool can be working on or waiting on. The middleware
+rejects with `503` only when the pool itself has no room, and `QUEUE_MAX_MB`
+bounds the bytes the queue may hold so a burst of large PDFs cannot OOM the
+container.
 
 ## Layout
 
@@ -110,6 +119,8 @@ cmd/pdfium-worker   PDFium plugin process (spawned by the pool, not run by hand)
 internal/domain     entities + error taxonomy (no dependencies)
 internal/usecase    business rules; owns the Extractor port it depends on
 internal/infrastructure/pdf   PDFium pool + text-extraction adapter
+internal/infrastructure/mupdf MuPDF adapter (measured, not the default engine)
+internal/benchmark      engine-level harness: per-document and rotating corpora
 internal/presentation/http    handlers, payload parsing, backpressure
 ```
 
@@ -137,58 +148,124 @@ PDFIUM_WORKER_PATH=$PWD/bin/pdfium-worker go test -tags integration ./...
 
 ## Load testing
 
-Both need a running stack. The script is mounted at `/scripts/spike.js` and
-reads its fixture from `../../testdata`, which resolves to the mount root.
+Both need a running stack and their binaries on `PATH`
+(`k6 v2.3.0`, `vegeta v12.13.0`). k6 resolves `open()` against the script's own
+directory, so it reads the fixtures from `../../testdata` unless `CORPUS`
+overrides that.
 
 ```bash
-docker run --rm --network host \
-  --add-host extract.universidad.localhost:127.0.0.1 \
-  -v "$PWD/scripts/k6:/scripts" -v "$PWD/testdata:/testdata" \
-  grafana/k6 run /scripts/spike.js
+k6 run scripts/k6/spike.js
 
-scripts/vegeta/attack.sh 50 30s https://extract.universidad.localhost/extract
+TARGET=https://extract.universidad.localhost ./scripts/vegeta/attack.sh
 ```
 
-`BASE_URL`, `PEAK_VUS` and `INSECURE_TLS` are overridable via `-e`. The shared
-Traefik owns `80`/`443` and redirects to HTTPS, and its certificate comes from
-mkcert, which is not in the k6 trust store, so `INSECURE_TLS` defaults to `true`.
+`TARGET`, `CORPUS`, `RATE`, `DURATION` and `TIMEOUT` are overridable. Both
+scripts default to the enunciado profile: k6 ramps 10 s to 100 VUs, holds 20 s
+and ramps down over 10 s; vegeta drives 50 req/s for 30 s with a 30 s timeout.
+Both rotate the four PDFs of `testdata/`. The shared Traefik owns `80`/`443` and
+redirects to HTTPS, and its certificate comes from mkcert, which is not in the
+client trust store, so point `SSL_CERT_FILE` at the mkcert root or pass the
+insecure flag of your tool.
 
 ### Measured capacity
 
-One replica on 1 CPU extracts the 16-page fixture at roughly 13 req/s. Past
-about 4 concurrent requests a replica is saturated: throughput stops improving
-while latency keeps degrading.
+The numbers below rotate the four PDFs of `testdata/`, which is what the
+enunciado measures. Medians of 3 runs on a 6 vCPU host; the full methodology,
+the engine comparison and the caveats are in
+[`docs/extractor-benchmark.md`](docs/extractor-benchmark.md).
 
-| Replicas | Concurrency | Throughput | p95 | Errors |
+One replica on 1 CPU extracts 8.4 req/s of the rotating corpus, and the HTTP
+layer costs about 1% on top of the engine.
+
+| Replicas | Concurrency | Throughput | p90 | Errors |
 | --- | --- | --- | --- | --- |
-| 1 | 4 | 12.93 req/s | 0.368 s | 0% |
-| 1 | 8 | 13.19 req/s | 0.682 s | 0% |
-| 1 | 10 | 12.95 req/s | 0.871 s | 0% |
-| 5 | 10 | 60.04 req/s | 0.195 s | 0% |
-| 5 | 20 | 59.76 req/s | 0.330 s | 0.33% |
-| 5 | 30 | 63.54 req/s | 0.396 s | 9.33% |
+| 5 | 10 | 27.29 req/s | 0.512 s | 0% |
+| 5 | 15 | 28.37 req/s | 0.712 s | 0% |
+| 5 | 20 | 28.47 req/s | 1.066 s | 0% |
+| 5 | 100 | 29.56 req/s | 0.982 s | 0% |
 
-`scripts/k6/spike.js` at its default 15 VUs: **46.06 req/s, 0.00% errors,
-p(95) 97 ms, 100% of checks passing** against the required
-`>25.35 req/s` with `0.00%` errors.
+Those four come from the curl harness at low concurrency. The number that counts
+is k6 on the exact enunciado profile, run against the shipped
+`MAX_WORKERS=2` / `QUEUE_SIZE=56` tuning:
 
-The 5-replica ceiling is roughly 60 req/s. Past that the service is overloaded,
-not broken: admission control returns `503` for the excess rather than queueing,
-so error rate tracks load above capacity. A 0% error run requires an arrival
-rate below capacity, which is why the script peaks at 15 VUs instead of
-overdriving the service.
+| Metric | Professor | Ours | |
+| --- | ---: | ---: | --- |
+| Throughput | 25.35 req/s | **29.15 req/s** | **+15.0%** |
+| Errors | 0.00% | **0.00%** (0 of 6 runs) | equal |
+| p50 | 1.88 s | 2.50 s | 1.3x worse |
+| p90 | 7.83 s | **4.62 s** | **1.7x better** |
+| p95 | 8.80 s | **4.97 s** | **1.8x better** |
+| Max | 13.94 s | **6.18 s** | **2.3x better** |
 
-### Tuning `MAX_WORKERS`
+Median of 6 runs. Throughput ranged 28.00-30.99 req/s between blocks as host load
+moved, so read it as "~29 req/s" rather than the best case. Errors were zero in
+every run, no container restarted, and the peak was 567 MiB per replica against
+the 1024 M limit.
 
-`MAX_WORKERS` is both the worker count and the per-replica admission limit, and
-it must be sized against the CPU limit: on a 1 CPU replica, `4` beat `10` on
-every axis measured.
+The p50 is the one metric we lose: their distribution is bimodal and ours is
+flat, because we queue where they rejected. On vegeta (50 req/s, 30 s) the gap is
+much wider: **23.80-24.43 req/s effective at 100.00% success, against 16.65
+req/s at 66.53%**, with no `503` at all and a p50 of 0.92 s against 14.89 s.
 
-| `MAX_WORKERS` | Throughput (conc 10) | p95 | Resident memory |
-| --- | --- | --- | --- |
-| `10` | 47.49 req/s | 0.228 s | 236 MiB |
-| `4` | 60.04 req/s | 0.195 s | 90 MiB |
+Throughput is capped by the host, not by the service: the five replicas hold a
+hard `cpus: 1.0` quota each, so they can claim at most 5 of the 6 cores and
+Traefik plus the load generator share what is left. A single replica sustains
+8.4 req/s of the rotating corpus, which extrapolates to ~42 req/s of extraction
+capacity across five if the host had the cores to give. On this machine it does
+not, which is also why the service cannot absorb vegeta's 50 req/s.
 
-`docker-compose.yml` therefore pins `MAX_WORKERS=4` for its `cpus: 1.0` limit.
-Raising the limit would need a larger total admission ceiling than
-`replicas x MAX_WORKERS`, and a bounded queue in front of the workers.
+### `EXTRACTOR_ENGINE`
+
+`pdfium` is the default and the only engine that is safe under concurrency.
+`mupdf` is wired and measured, but `go-fitz`'s `Document.Text()` is **not safe for
+concurrent use**: it runs the page content stream through cgo and segfaults the
+process, which takes down all five replicas and makes Traefik answer `502`. Keep
+it only for reproducing that behaviour:
+
+```bash
+EXTRACTOR_ENGINE=mupdf docker compose up -d
+```
+
+### The queue is what fixes the tail
+
+With `MAX_WORKERS` as the only admission limit, the 21st simultaneous request
+per replica is rejected with `503`, which is what produces a p90 of 7.83 s in the
+reference. Queuing turns that rejection into latency:
+
+| Concurrency | Throughput | 503 rate |
+| --- | --- | --- |
+| 10 | 26.55 req/s | 0.66% |
+| 15 | 24.01 req/s | 3.50% |
+| 20 | 24.54 req/s | 8.50% |
+
+The queue removes every rejection *and* raises throughput, because a replica no
+longer answers `503` while it still has an idle worker.
+
+### Tuning the workers and the queue
+
+Both knobs were swept with k6 on the enunciado profile, three interleaved passes
+per configuration so that host drift hits every cell equally. Medians of 3:
+
+| `MAX_WORKERS` | `QUEUE_SIZE` | In flight | Throughput | Errors | p50 | p90 | p95 | Max |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 4 | 32 | 36 | 27.84 req/s | 0.00% | 2.57 s | 4.77 s | 5.33 s | 6.87 s |
+| 3 | 48 | 51 | 30.05 req/s | 0.00% | 2.46 s | 4.46 s | 5.34 s | 6.85 s |
+| 2 | 32 | 34 | 28.99 req/s | 0.66% | 2.31 s | 4.85 s | 5.32 s | 7.15 s |
+| 2 | 40 | 42 | 28.59 req/s | 0.00% | 2.48 s | 4.80 s | 5.88 s | 7.00 s |
+| 2 | 48 | 50 | 29.19 req/s | 0.00% | 2.63 s | 4.22 s | 4.55 s | 7.09 s |
+| **2** | **56** | **58** | **30.68 req/s** | **0.00%** | **2.45 s** | **4.44 s** | **4.82 s** | **6.31 s** |
+| 2 | 64 | 66 | 28.61 req/s | 0.00% | 2.48 s | 4.50 s | 4.71 s | 6.83 s |
+
+Two independent effects, both measured. Dropping `MAX_WORKERS` from 4 to 2 is
+worth roughly +4% throughput, because past the second worker the replicas only
+split their own `cpus: 1.0` quota: measured in isolation, `2` beat `4`, and `4`
+beat `1`, so 2 is a genuine optimum rather than "less is more". Queue depth
+trades p50 against rejections -- `QUEUE_SIZE=32` has the best p50 of the sweep but
+the only nonzero error rate, because 34 in-flight slots per replica is not enough
+headroom for Traefik's load imbalance. `56` is where errors hit zero without
+paying for it in p50. `64` buys nothing further.
+
+`QUEUE_SIZE=56` does not mean the profile's 100 VUs are buffered: 58 in flight
+per replica is 290 across the five, far more than the profile ever offers. The
+queue is headroom against the proxy's imbalance, and `QUEUE_MAX_MB=256` is what
+bounds memory -- peak observed was 567 MiB per replica.

@@ -15,10 +15,21 @@ services:
     environment:
       - PORT=8080
       - MAX_UPLOAD_MB=50
-      - MAX_WORKERS=4
-      - QUEUE_SIZE=100
+      # Measured optimum under k6 with the enunciado profile. Each replica has a
+      # hard cpus:1.0 quota, so extra concurrency only splits the same core and
+      # lengthens latency: 2 workers measured +10.2% throughput and a shorter
+      # p50 than 4.
+      - MAX_WORKERS=${MAX_WORKERS:-2}
+      # 2 workers + 56 queued = 58 in flight per replica, 290 across the five.
+      # The queue is headroom against Traefik's load imbalance, not a buffer the
+      # 100 VUs of the profile ever fill; QUEUE_MAX_MB is what bounds memory.
+      - QUEUE_SIZE=${QUEUE_SIZE:-56}
+      # Byte ceiling for running plus queued jobs, so a burst of large PDFs
+      # cannot push the container past its memory limit.
+      - QUEUE_MAX_MB=256
       - READ_TIMEOUT=30
       - WRITE_TIMEOUT=30
+      - EXTRACTOR_ENGINE=${EXTRACTOR_ENGINE:-pdfium}
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=mired"
