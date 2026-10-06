@@ -69,8 +69,7 @@ COPY . .
 
 # cgo cannot cross-compile, so this image is linux/amd64 only.
 RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server && \
-    CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/pdfium-worker ./cmd/pdfium-worker && \
-    CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/benchmark ./cmd/benchmark
+    CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/pdfium-worker ./cmd/pdfium-worker
 
 # ---------------------------------------------------------------------------
 # Test target. Carries the real PDFium library so the integration tests exercise
@@ -84,7 +83,7 @@ ENV PDFIUM_WORKER_PATH=/out/pdfium-worker
 
 RUN go vet ./...
 RUN go test ./...
-RUN go test -tags integration -v -timeout 5m ./internal/infrastructure/pdf/ ./internal/infrastructure/mupdf/
+RUN go test -tags integration -v -timeout 5m ./internal/infrastructure/pdf/
 
 # ---------------------------------------------------------------------------
 # Runtime: server + worker + libpdfium.so, nothing else.

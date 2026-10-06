@@ -32,7 +32,3 @@ go.work.sum
 # .idea/
 # .vscode/
 
-# Benchmark binary and artifacts
-benchmark
-cmd/benchmark/benchmark
-internal/benchmark/tmp
