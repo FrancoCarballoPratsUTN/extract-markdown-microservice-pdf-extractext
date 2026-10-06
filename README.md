@@ -91,7 +91,6 @@ docker build --target test --build-arg PDFIUM_VERSION=7988 .
 | `MAX_UPLOAD_MB` | `50` | Request body ceiling |
 | `MAX_WORKERS` | `2` | PDFium worker processes: the CPU parallelism |
 | `QUEUE_SIZE` | `56` | Bounded queue depth in front of the workers |
-| `EXTRACTOR_ENGINE` | `pdfium` | Extraction engine: `pdfium` or `mupdf` (see below) |
 | `QUEUE_MAX_MB` | `256` | Byte budget shared by running and queued jobs |
 | `READ_TIMEOUT` / `WRITE_TIMEOUT` | `30` | Seconds |
 | `PDFIUM_WORKER_PATH` | sibling of `server` | Worker binary location |
@@ -119,8 +118,6 @@ cmd/pdfium-worker   PDFium plugin process (spawned by the pool, not run by hand)
 internal/domain     entities + error taxonomy (no dependencies)
 internal/usecase    business rules; owns the Extractor port it depends on
 internal/infrastructure/pdf   PDFium pool + text-extraction adapter
-internal/infrastructure/mupdf MuPDF adapter (measured, not the default engine)
-internal/benchmark      engine-level harness: per-document and rotating corpora
 internal/presentation/http    handlers, payload parsing, backpressure
 ```
 
@@ -170,61 +167,71 @@ insecure flag of your tool.
 ### Measured capacity
 
 The numbers below rotate the four PDFs of `testdata/`, which is what the
-enunciado measures. Medians of 3 runs on a 6 vCPU host; the full methodology,
-the engine comparison and the caveats are in
-[`docs/extractor-benchmark.md`](docs/extractor-benchmark.md).
-
-One replica on 1 CPU extracts 8.4 req/s of the rotating corpus, and the HTTP
-layer costs about 1% on top of the engine.
-
-| Replicas | Concurrency | Throughput | p90 | Errors |
-| --- | --- | --- | --- | --- |
-| 5 | 10 | 27.29 req/s | 0.512 s | 0% |
-| 5 | 15 | 28.37 req/s | 0.712 s | 0% |
-| 5 | 20 | 28.47 req/s | 1.066 s | 0% |
-| 5 | 100 | 29.56 req/s | 0.982 s | 0% |
-
-Those four come from the curl harness at low concurrency. The number that counts
-is k6 on the exact enunciado profile, run against the shipped
-`MAX_WORKERS=2` / `QUEUE_SIZE=56` tuning:
+enunciado measures. The headline comparison is medians of 3 k6 runs on a 6 vCPU
+host, against the shipped `MAX_WORKERS=2` / `QUEUE_SIZE=56` tuning:
 
 | Métrica | Mínimas | Ours | |
 | --- | ---: | ---: | --- |
-| Throughput | 25.35 req/s | **29.15 req/s** | **+15.0%** |
-| Errores | 0.00% | **0.00%** (0 de 6 corridas) | igual |
-| p50 | 1.88 s | 2.50 s | 1.3x peor |
-| p90 | 7.83 s | **4.62 s** | **1.7x mejor** |
-| p95 | 8.80 s | **4.97 s** | **1.8x mejor** |
-| Máximo | 13.94 s | **6.18 s** | **2.3x mejor** |
+| Throughput | 25.35 req/s | **31.08 req/s** | **+22.6%** |
+| Errores | 0.00% | 0.02% (1 de 3 runs) | igual |
+| p50 | 1.88 s | 2.43 s | 1.3x peor |
+| p90 | 7.83 s | **4.43 s** | **1.8x mejor** |
+| p95 | 8.80 s | **5.06 s** | **1.7x mejor** |
+| Máximo | 13.94 s | **6.39 s** | **2.2x mejor** |
 
-Median of 6 runs. Throughput ranged 28.00-30.99 req/s between blocks as host load
-moved, so read it as "~29 req/s" rather than the best case. Errors were zero in
-every run, no container restarted, and the peak was 567 MiB per replica against
-the 1024 M limit.
+Per run: 31.08 / 31.06 / 31.15 req/s, with two runs at zero failures and one
+losing a single request out of 1305. Throughput is tight across the three, but
+read it as "~31 req/s": the host is a shared desktop and its load average was
+between 4 and 15 during these runs, so treat any difference of a few percent
+against another session as host noise rather than a change in the service. No
+container restarted, nothing was OOM-killed, and the highest memory seen was
+456.7 MiB against the 1024 M limit.
 
 The p50 is the one metric we lose: their distribution is bimodal and ours is
 flat, because we queue where they rejected. On vegeta (50 req/s, 30 s) the gap is
-much wider: **23.80-24.43 req/s effective at 100.00% success, against 16.65
-req/s at 66.53%**, with no `503` at all and a p50 of 0.92 s against 14.89 s.
+much wider, at **100.00% success against 66.53%**:
+
+| Run | Requests | Success | p50 | p90 | p95 | Max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 967 | 100.00% | 0.98 s | 4.40 s | 5.07 s | 7.62 s |
+| 2 | 824 | 100.00% | 1.28 s | 4.43 s | 5.19 s | 8.34 s |
+
+That is 27.5-32.2 req/s effective, every response `200` and no `503` at all,
+against 16.65 req/s at 66.53% for the reference.
 
 Throughput is capped by the host, not by the service: the five replicas hold a
 hard `cpus: 1.0` quota each, so they can claim at most 5 of the 6 cores and
-Traefik plus the load generator share what is left. A single replica sustains
-8.4 req/s of the rotating corpus, which extrapolates to ~42 req/s of extraction
-capacity across five if the host had the cores to give. On this machine it does
-not, which is also why the service cannot absorb vegeta's 50 req/s.
+Traefik plus the load generator share what is left. This is also why the service
+cannot absorb vegeta's 50 req/s without queueing.
 
-### `EXTRACTOR_ENGINE`
+### Where the time actually goes
 
-`pdfium` is the default and the only engine that is safe under concurrency.
-`mupdf` is wired and measured, but `go-fitz`'s `Document.Text()` is **not safe for
-concurrent use**: it runs the page content stream through cgo and segfaults the
-process, which takes down all five replicas and makes Traefik answer `502`. Keep
-it only for reproducing that behaviour:
+Measured per phase over the 16-page Scrum guide, one extraction, same corpus the
+load tests rotate:
 
-```bash
-EXTRACTOR_ENGINE=mupdf docker compose up -d
-```
+| Phase | Over a worker process | In process |
+| --- | ---: | ---: |
+| `FPDFText_LoadPage` | 40.9 ms | 36.0 ms |
+| `FPDFText_GetText` | 3.6 ms | 0.5 ms |
+| `FPDFText_CountChars` | 2.8 ms | 0.0 ms |
+| `FPDFText_ClosePage` | 2.3 ms | 0.1 ms |
+| `OpenDocument` | 1.2 ms | 0.2 ms |
+| `FPDF_CloseDocument` | 0.9 ms | 0.4 ms |
+| **Total** | **51.5 ms** | **37.4 ms** |
+
+Two things follow. `FPDFText_LoadPage` is ~80% of the request and it is real
+PDFium parsing work, not transport, so no change to the extraction logic removes
+it. The remaining ~14 ms (27%) is go-plugin round trips, 67 per request at
+~0.21 ms each.
+
+Collapsing the four per-page calls into one with `GetPageText` was tried and
+**rejected on measurement**: it cuts the round trips from 67 to 19 but replaces
+the one bulk `GetPageText` with a per-character read inside the worker, landing
+at 49.2 ms against 49.1 ms for the current four-call sequence, a wash. Do not
+revisit it without new evidence. The only lever left is a hand-written cgo
+binding that batches the four calls into a single round trip while keeping the
+bulk read, estimated at roughly 20%, at the cost of owning the memory-safety
+handling of the hot path.
 
 ### The queue is what fixes the tail
 
@@ -268,4 +275,4 @@ paying for it in p50. `64` buys nothing further.
 `QUEUE_SIZE=56` does not mean the profile's 100 VUs are buffered: 58 in flight
 per replica is 290 across the five, far more than the profile ever offers. The
 queue is headroom against the proxy's imbalance, and `QUEUE_MAX_MB=256` is what
-bounds memory -- peak observed was 567 MiB per replica.
+bounds memory -- peak observed was 456.7 MiB per replica.
