@@ -12,7 +12,6 @@ const (
 	defaultMaxWorkers   = 10
 	defaultQueueSize    = 16
 	defaultQueueMaxMB   = 256
-	defaultEngine       = "pdfium"
 	defaultReadTimeout  = 30
 	defaultWriteTimeout = 30
 )
@@ -27,7 +26,6 @@ type Config struct {
 	MaxWorkers       int
 	QueueSize        int
 	QueueMaxMB       int // byte budget shared by running and queued jobs
-	Engine           string
 	ReadTimeout      int // seconds
 	WriteTimeout     int // seconds
 	PdfiumWorkerPath string
@@ -40,7 +38,6 @@ func Load() *Config {
 		MaxWorkers:       getEnvInt("MAX_WORKERS", defaultMaxWorkers),
 		QueueSize:        getEnvInt("QUEUE_SIZE", defaultQueueSize),
 		QueueMaxMB:       getEnvInt("QUEUE_MAX_MB", defaultQueueMaxMB),
-		Engine:           getEnv("EXTRACTOR_ENGINE", defaultEngine),
 		ReadTimeout:      getEnvInt("READ_TIMEOUT", defaultReadTimeout),
 		WriteTimeout:     getEnvInt("WRITE_TIMEOUT", defaultWriteTimeout),
 		PdfiumWorkerPath: getEnv("PDFIUM_WORKER_PATH", defaultWorkerPath(currentExecutable(), pdfiumWorkerName)),

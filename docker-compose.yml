@@ -29,7 +29,6 @@ services:
       - QUEUE_MAX_MB=256
       - READ_TIMEOUT=30
       - WRITE_TIMEOUT=30
-      - EXTRACTOR_ENGINE=${EXTRACTOR_ENGINE:-pdfium}
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=mired"
