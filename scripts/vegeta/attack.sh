@@ -17,8 +17,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-TARGET="${TARGET:-https://extract.universidad.localhost}"
-CORPUS="${CORPUS:-testdata}"
+TARGET="${TARGET:-http://127.0.0.1:8080}"
+CORPUS="${CORPUS:-tests/stress/pdfs}"
 RATE="${RATE:-50}"
 DURATION="${DURATION:-30s}"
 TIMEOUT="${TIMEOUT:-30s}"

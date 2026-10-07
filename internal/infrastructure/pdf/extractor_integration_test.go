@@ -1,5 +1,3 @@
-//go:build integration
-
 package pdf
 
 import (
@@ -13,7 +11,7 @@ import (
 )
 
 const (
-	testdataDir   = "../../../testdata"
+	testdataDir   = "../../../tests/stress/pdfs"
 	scrumGuidePDF = "2020-Scrum-Guide-Spanish-Latin-South-American.pdf"
 	extractBudget = 60 * time.Second
 )
