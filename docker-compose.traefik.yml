@@ -1,0 +1,12 @@
+services:
+  app:
+    labels:
+      - "traefik.docker.network=mired"
+      - "traefik.http.routers.extract.entrypoints=https"
+      - "traefik.http.routers.extract.tls=true"
+    networks:
+      - mired
+
+networks:
+  mired:
+    external: true

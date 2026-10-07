@@ -1,4 +1,19 @@
 services:
+  traefik:
+    image: traefik:v3.6.7
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=edge
+      - --entrypoints.web.address=:8080
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - edge
+    restart: unless-stopped
+
   app:
     build:
       context: .
@@ -15,35 +30,20 @@ services:
     environment:
       - PORT=8080
       - MAX_UPLOAD_MB=50
-      # Measured optimum under k6 with the enunciado profile. Each replica has a
-      # hard cpus:1.0 quota, so extra concurrency only splits the same core and
-      # lengthens latency: 2 workers measured +10.2% throughput and a shorter
-      # p50 than 4.
       - MAX_WORKERS=${MAX_WORKERS:-2}
-      # 2 workers + 56 queued = 58 in flight per replica, 290 across the five.
-      # The queue is headroom against Traefik's load imbalance, not a buffer the
-      # 100 VUs of the profile ever fill; QUEUE_MAX_MB is what bounds memory.
       - QUEUE_SIZE=${QUEUE_SIZE:-56}
-      # Byte ceiling for running plus queued jobs, so a burst of large PDFs
-      # cannot push the container past its memory limit.
       - QUEUE_MAX_MB=256
       - READ_TIMEOUT=30
       - WRITE_TIMEOUT=30
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=mired"
-      - "traefik.http.routers.extract.rule=Host(`extract.universidad.localhost`)"
-      - "traefik.http.routers.extract.entrypoints=https"
-      - "traefik.http.routers.extract.tls=true"
+      - 'traefik.http.routers.extract.rule=HostRegexp(`extract\.universidad\.localhost|localhost|127\.0\.0\.1`)'
+      - "traefik.http.routers.extract.entrypoints=web"
       - "traefik.http.services.extract.loadbalancer.server.port=8080"
     networks:
-      - mired
+      - edge
     restart: unless-stopped
 
-# Routing is owned by the shared reverse proxy in ~/Documents/Services/traefik.
-# It listens on :80 and :443, forces :80 to redirect to :https, and serves the
-# mkcert certificate covering *.universidad.localhost, so this project attaches
-# through host-based routing on the https entrypoint instead of running its own.
 networks:
-  mired:
-    external: true
+  edge:
+    driver: bridge
