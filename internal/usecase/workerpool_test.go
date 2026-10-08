@@ -16,8 +16,6 @@ func (s *slowExtractor) Extract(ctx context.Context, data []byte) (domain.Extrac
 	return domain.ExtractResponse{Content: string(data), PageCount: 1}, nil
 }
 
-type ctxKey struct{}
-
 func TestWorkerPoolProcessesJob(t *testing.T) {
 	uc := NewExtractUsecase(&mockExtractor{content: "hi", pageCount: 1})
 	wp := NewWorkerPool(uc, 2, 10, 1<<20)
