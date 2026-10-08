@@ -1,9 +1,10 @@
 # extract-markdown-microservice-pdf-extractext
 
-Microservicio de alta concurrencia escrito en Go para extraer texto de archivos
-PDF y devolverlo en Markdown. Utiliza una arquitectura de tres capas, una cola
+Microservicio de alta concurrencia escrito en Go para extraer archivos PDF y
+devolverlos en Markdown. Utiliza una arquitectura de tres capas, una cola
 de trabajadores acotada, errores RFC 9457 y configuración compatible con
-12-Factor.
+12-Factor. La extracción corre en proceso con el motor `pdf_oxide`
+(binding Go vía purego, sin CGO ni procesos extra).
 
 ## Punto de acceso
 
@@ -12,7 +13,7 @@ binario `application/pdf` / `application/octet-stream`.
 
 ```json
 {
-  "content": "Ken Schwaber & Jeff Sutherland\n...",
+  "content": "# Guía Scrum\n\nKen Schwaber & Jeff Sutherland\n...",
   "page_count": 16
 }
 ```
@@ -26,15 +27,15 @@ Los errores usan `application/problem+json` (RFC 9457):
 | Estado | Significado |
 | --- | --- |
 | 400 | Cuerpo vacío, PDF corrupto o tipo de contenido no admitido |
-| 413 | El cuerpo supera `MAX_UPLOAD_MB` |
+| 413 | El cuerpo supera `MAX_UPLOAD_MB` o el documento supera `MAX_PAGES` |
 | 503 | El control de admisión está saturado |
-| 500 | Fallo del trabajador de PDFium |
+| 500 | Fallo de la extracción |
 
 ## Inicio rápido
 
-El contenedor incluye PDFium y no requiere instalar dependencias en el equipo
-anfitrión. El siguiente comando inicia cinco réplicas detrás de un punto de
-acceso local:
+El contenedor incluye la biblioteca `libpdf_oxide` y no requiere instalar
+dependencias en el equipo anfitrión. El siguiente comando inicia cinco réplicas
+detrás de un punto de acceso local:
 
 ```bash
 docker compose up --build
@@ -53,25 +54,29 @@ docker compose -f docker-compose.yml -f docker-compose.traefik.yml up --build
 La justificación de la arquitectura, las mediciones y el análisis comparativo
 están en **[INFORME.md](INFORME.md)**.
 
-## Dependencia PDFium
+## Dependencia pdf_oxide
 
-PDFium es una biblioteca de C++ y no se enlaza directamente con el servidor.
-La imagen contiene dos binarios:
+La extracción la hace `pdf_oxide` (core Rust, binding oficial de Go
+`github.com/yfedoseev/pdf_oxide/go`), cargado en tiempo de ejecución con
+`purego` (`dlopen`), por lo que el binario se compila con `CGO_ENABLED=0` y
+no enlaza la biblioteca al build:
 
-- `/app/server`: servidor HTTP que se comunica con los trabajadores mediante
-  `go-plugin`.
-- `/app/pdfium-worker`: proceso PDFium iniciado por la cola de trabajadores.
+- La imagen la instala con el installer pineado
+  (`go run github.com/yfedoseev/pdf_oxide/go/cmd/install@v0.3.78 -shared`) en
+  `/opt/pdf_oxide/libpdf_oxide.so`.
+- `PDF_OXIDE_LIB_PATH` apunta a esa biblioteca. El servidor valida en el
+  arranque que cargue y aborta con un error claro si no (probe de arranque),
+  en vez de fallar `500` en cada petición.
+- El motor corre en el mismo proceso que el servidor HTTP. Un PDF malformado
+  se traduce en un error controlado (400/500) vía mapeo de sentinels y
+  `recover()` en el adaptador; no hay proceso worker que reemplazar.
 
-Esta separación limita el impacto de un fallo nativo a un solo trabajador, que
-la cola descarta y reemplaza. El inicio valida que el binario del trabajador
-exista y pueda iniciarse; una configuración inválida detiene el arranque en vez
-de devolver errores `500` para todas las solicitudes.
-
-La imagen usa Go 1.26, PDFium `chromium/8057` para Linux x64 y Debian bookworm.
-Para probar otra versión:
+Para desarrollo local sin Docker, la misma instalación sirve:
 
 ```bash
-docker build --target test --build-arg PDFIUM_VERSION=7988 .
+go run github.com/yfedoseev/pdf_oxide/go/cmd/install@v0.3.78 -shared
+export PDF_OXIDE_LIB_PATH=$HOME/.cache/pdf_oxide/v0.3.78/lib/linux_amd64/libpdf_oxide.so
+go test -tags integration ./...
 ```
 
 ## Configuración
@@ -80,11 +85,12 @@ docker build --target test --build-arg PDFIUM_VERSION=7988 .
 | --- | --- | --- |
 | `PORT` | `8080` | Puerto de escucha |
 | `MAX_UPLOAD_MB` | `50` | Tamaño máximo del cuerpo |
-| `MAX_WORKERS` | `2` | Cantidad de procesos PDFium |
+| `MAX_PAGES` | `1000` | Tope de páginas por documento (`0` = sin límite) |
+| `MAX_WORKERS` | `2` | Extracciones concurrentes por réplica |
 | `QUEUE_SIZE` | `56` | Capacidad de la cola por réplica |
 | `QUEUE_MAX_MB` | `256` | Límite de bytes de trabajos activos y pendientes |
 | `READ_TIMEOUT` / `WRITE_TIMEOUT` | `30` | Tiempo de espera en segundos |
-| `PDFIUM_WORKER_PATH` | Junto a `server` | Ubicación del binario trabajador |
+| `PDF_OXIDE_LIB_PATH` | — | Ruta de `libpdf_oxide.so` (obligatoria) |
 
 `MAX_WORKERS` se ajusta a la cuota de CPU de cada réplica. Con la configuración
 del archivo Compose, dos trabajadores superan a uno y cuatro en rendimiento.
@@ -94,28 +100,27 @@ La admisión máxima por réplica es `MAX_WORKERS + QUEUE_SIZE`.
 
 ```text
 cmd/server                 composición de configuración, HTTP y apagado
-cmd/pdfium-worker          proceso de PDFium iniciado por la cola
 internal/domain            entidades y errores del dominio
 internal/usecase           reglas de negocio y cola de trabajadores
-internal/infrastructure/pdf adaptador de PDFium
+internal/infrastructure/pdf adaptador de pdf_oxide
 internal/presentation/http  controladores, validación y control de admisión
 ```
 
 ## Pruebas
 
 La etapa `test` ejecuta análisis estático, pruebas unitarias y pruebas de
-integración contra PDFium:
+integración contra la librería real de pdf_oxide:
 
 ```bash
 docker build --target test .
 ```
 
-Para una ejecución local de las pruebas de integración:
+Localmente:
 
 ```bash
-export PKG_CONFIG_PATH=/opt/pdfium LD_LIBRARY_PATH=/opt/pdfium/lib
-go build -o bin/pdfium-worker ./cmd/pdfium-worker
-PDFIUM_WORKER_PATH=$PWD/bin/pdfium-worker go test -tags integration ./...
+make test              # go vet + go test (CGO_ENABLED=0)
+make test-unit         # tests con tag //go:build unit
+make test-integration  # requiere PDF_OXIDE_LIB_PATH (librería real)
 ```
 
 ## Pruebas de carga
@@ -135,7 +140,11 @@ requerir configurar `SSL_CERT_FILE` o el modo inseguro de la herramienta.
 
 ## Resultados medidos
 
-Con cinco réplicas, `MAX_WORKERS=2` y `QUEUE_SIZE=56`, las ejecuciones de k6
-alcanzaron aproximadamente `31 req/s`, con una mejora del p90 y p95 frente a la
-configuración de referencia. El informe técnico contiene las tablas completas,
-las condiciones de medición y el análisis del cuello de botella.
+Con cinco réplicas (`cpus: 1.0`), `MAX_WORKERS=2` y `QUEUE_SIZE=56`, el perfil
+de k6 (100 VUs) midió ~15 req/s con **0,00 % de errores** y la carga fija de
+Vegeta (50 req/s) sirvió el **100 % de las peticiones** con p50 ~2,4 s. La
+extracción con `pdf_oxide` cuesta ~4× más CPU por petición que la versión
+anterior con PDFium (~230 ms contra ~52 ms), así que con la cuota total de
+5 CPUs el techo de throughput queda en ~15–20 req/s: CPU-bound, no de cola ni
+de transporte. El informe técnico contiene las tablas completas, las condiciones
+de medición y el análisis del cuello de botella.

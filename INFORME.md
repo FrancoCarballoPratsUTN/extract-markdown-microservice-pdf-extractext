@@ -7,34 +7,54 @@ Materia: Desarrollo de Software
 
 ## 1. Resumen ejecutivo
 
-El servicio expone un único endpoint HTTP que recibe un PDF y devuelve su texto en
-Markdown. El problema de fondo no era escribir la extracción, sino **decidir bajo
-cuánta concurrencia y con qué límite de memoria** podía ejecutarse un motor de
-PDF en C (PDFium) desde Go sin que el proceso se degradara.
+El servicio expone un único endpoint HTTP que recibe un PDF y devuelve su
+contenido en Markdown. El trabajo tiene dos etapas documentadas en este
+informe: la primera construyó y ajustó la extracción con **PDFium** mediada
+por proceso (secciones 2 a 5, con sus perfiles y barridos); la segunda la
+reemplazó por **`pdf_oxide`**, un binding oficial de Go que corre in-process
+y devuelve Markdown estructurado, eliminando el binario worker y el pool de
+procesos sin tocar los mecanismos de protección (sección 5.7).
 
-El resultado del trabajo se resume en cuatro afirmaciones, cada una sostenida por
-medición:
+**Etapa actual — `pdf_oxide` in-process.** El servicio es un binario único
+(`CGO_ENABLED=0`, la librería nativa se carga con `purego` vía
+`PDF_OXIDE_LIB_PATH`) y la petición completa hace `OpenFromBytes` →
+`PageCount` (tope `MAX_PAGES` → 413) → `ToMarkdownAll` → `sanitize`, con
+`recover()` en el adaptador y probe de arranque. Medido con el perfil del
+enunciado (sección 5.7):
 
-1. **El cuello de botella es la CPU por réplica, no el transporte.** El 80 % del
-   tiempo de una extracción está en `FPDFText_LoadPage`, que es trabajo real de
-   parsing de PDFium. Agregar concurrencia no lo reduce.
-2. **Subir la concurrencia no aumenta el rendimiento: aumenta el rechazo.** Con 10
-   workers sobre una cuota de `cpus: 1.0` el throughput es idéntico al de 2 workers,
-   pero el 8,14 % de las peticiones termina en `503` y la memoria por réplica roza el
-   límite (986 MiB de 1024).
-3. **La configuración final no optimizó el rendimiento, lo hizo confiable.** En el
-   experimento A-B-A de la sección 5.2 pasó de 8,14 % de errores a 0,00 % con el
-   mismo throughput, y la memoria del percentil 95 bajó de 918 MiB a 377 MiB.
-4. **El rechazo es el primer límite que se agota, y su precio es memoria.** En la
-   sesión de medición de este informe el perfil completo dejó 1,62 % de `503`
-   (178 de 10 958 peticiones de k6), donde la referencia del enunciado no rechaza
-   ninguna. La sección 5.5 lo localiza por medición: no es el edge ni la
-   profundidad de la cola, es el presupuesto de bytes de la admisión, y subirlo
-   baja los `503` a 0,13 % a costa de llevar una réplica a 902 MiB de 1024.
+1. **Cero errores bajo saturación.** 0,00 % de errores en k6 —la etapa con
+   PDFium había quedado en 1,62 % de `503`— y **100 % de éxito** en la carga
+   fija de Vegeta contra el 66,53 % de la referencia.
+2. **El límite sigue siendo la CPU por réplica.** La conversión a Markdown
+   cuesta ~4× la extracción en texto crudo (~226 ms CPU/req contra 51,5 ms),
+   así que con la cuota total de 5 CPUs (5 réplicas × `cpus: 1.0`) el techo
+   teórico es ~22 req/s y el medido ~15 req/s: el throughput queda por
+   debajo de los 25,35 req/s de la referencia, con el análisis en §5.7.
 
-Contra la referencia del enunciado, el servicio entrega **+35,8 % de throughput**
-(34,43 contra 25,35 req/s) y en la prueba de carga fija de Vegeta **98,4–99,3 % de
-éxito contra 66,53 %**.
+**Etapa PDFium (histórica).** Las mediciones de las secciones 3 a
+5.6 corresponden a esa versión y se conservan como línea base:
+
+1. **El cuello de botella es la CPU por réplica, no el transporte.** El 80 %
+   del tiempo de una extracción estaba en `FPDFText_LoadPage`. Agregar
+   concurrencia no lo reduce.
+2. **Subir la concurrencia no aumenta el rendimiento: aumenta el rechazo.** Con
+   10 workers sobre una cuota de `cpus: 1.0` el throughput es idéntico al de 2
+   workers, pero el 8,14 % de las peticiones termina en `503` y la memoria por
+   réplica roza el límite (986 MiB de 1024).
+3. **La configuración final no optimizó el rendimiento, lo hizo confiable.** En
+   el experimento A-B-A de la sección 5.2 pasó de 8,14 % de errores a 0,00 %
+   con el mismo throughput, y la memoria del percentil 95 bajó de 918 MiB a
+   377 MiB.
+4. **El rechazo es el primer límite que se agota, y su precio es memoria.** El
+   perfil completo de esa etapa dejó 1,62 % de `503` (178 de 10 958 peticiones
+   de k6). La sección 5.5 lo localiza por medición: es el presupuesto de bytes
+   de la admisión, y subirlo baja los `503` a 0,13 % a costa de llevar una
+   réplica a 902 MiB de 1024.
+
+En esa etapa el servicio entregó **+35,8 % de throughput** contra la
+referencia (34,43 contra 25,35 req/s) y 98,4–99,3 % de éxito en Vegeta. Tras
+la migración esos números bajan a ~15 req/s por el mayor costo del nuevo
+motor, pero los errores llegan a 0,00 % y Vegeta al 100 % —ver §5.7—.
 
 ---
 
@@ -58,31 +78,42 @@ Contra la referencia del enunciado, el servicio entrega **+35,8 % de throughput*
               ▼           ▼           ▼           ▼           ▼
           ┌──────────────────────────────────────────────────────┐
           │  cola acotada  QUEUE_SIZE=56 + presupuesto de bytes  │
-          │  2 workers  ──▶  pdfium-worker  (proceso separado)   │
+          │  2 workers  ──▶  pdf_oxide (purego, en el proceso)   │
           └──────────────────────────────────────────────────────┘
 ```
 
-### 2.2 Por qué dos procesos y no uno
+El servicio actual es **un solo binario por réplica**: `cmd/server` compone
+configuración, HTTP, cola y el adaptador de `pdf_oxide`. No hay proceso
+adicional, socket ni RPC: la conversión ocurre dentro de la misma réplica.
 
-El servicio se compone de **dos binarios** que se comunican por RPC sobre un socket
-unix:
+### 2.2 Por qué un solo proceso (y por qué antes eran dos)
 
-- `cmd/server/main.go` — servidor HTTP, cola, réplicas.
-- `cmd/pdfium-worker/main.go` — ejecuta PDFium y expone el RPC.
+La primera versión de este informe describía **dos binarios** —`server` y
+`pdfium-worker`— comunicados por RPC sobre un socket unix vía `go-plugin`, con
+un pool de procesos que reponía al worker si PDFium se caía. La razón era
+real: PDFium es una biblioteca de C sin manejo de memoria seguro en los
+bordes, y un `SIGSEGV` con un PDF malformado habría matado la réplica entera
+(la sección 4.1 muestra el caso reproducible de MuPDF).
 
-La razón es el aislamiento de fallos. PDFium es una biblioteca de C sin manejo de
-memoria seguro en los bordes: un documento malformado la puede hacer escribir fuera
-de los límites y matar el proceso con `SIGSEGV`. Si ese motor corriera en el mismo
-proceso que el servidor HTTP, un PDF de entrada mataría la réplica entera y el
-cliente recibiría un reset de conexión en lugar de un error manejado.
+La migración a **`pdf_oxide`** cambia el intercambio:
 
-Al vivir en un proceso separado, un fallo de PDFium se circunscribe al worker: el
-pool lo detecta (`pluginClient.Exited()`), lo repone y el servicio sigue respondiendo.
+- El core es **Rust** (memoria segura por construcción), no C; el binding se
+  carga con `purego` (`dlopen`), así que el binario se compila con
+  `CGO_ENABLED=0` y no hay riesgo de que un enlace directo reviva el problema
+  que motivó el proceso separado.
+- El adaptador agrega las protecciones en proceso que reemplazan al pool:
+  mapeo de sentinels del binding a errores de dominio (PDF no parseable →
+  400, páginas > `MAX_PAGES` → 413), `recover()` ante un panic nativo → 500
+  (`extractor.go:45`), y un **probe de arranque** que intenta extraer un
+  payload inválido y aborta el servidor si la librería no carga
+  (`main.go:21-30`) — antes de que llegue tráfico, no como un `500` en cada
+  petición.
+- El costo residual aceptado y documentado: una llamada nativa no se puede
+  cancelar con el contexto; ocupa un worker hasta retornar. El pool de
+  workers y los deadlines de la sección 2.3/2.5 siguen acotando eso.
 
-El costo es real y está medido: el viaje ida y vuelta por RPC cuesta ~0,21 ms y el
-servicio hace **67 llamadas por extracción** sobre un total de 51,5 ms, es decir
-~14 ms (27 %) del tiempo. Es el precio de la aislamiento, y la sección 3.2 muestra
-que no vale la pena reducirlo.
+El aislamiento por proceso se conservó como decisión **histórica** y como
+línea base de comparación (secciones 3 a 5.6), no como arquitectura vigente.
 
 ### 2.3 La cola acotada
 
@@ -131,18 +162,18 @@ puerto hacia todas.
 
 | Decisión | Alternativa descartada | Motivo |
 | --- | --- | --- |
-| PDFium en proceso separado | PDFium embebido con cgo directo en el servidor | Un `SIGSEGV` de un PDF malformado mataría la réplica completa. Medido: MuPDF provoca `SIGSEGV` de forma reproducible. |
+| `pdf_oxide` in-process (purego) | Worker en proceso separado con RPC (versión anterior, `go-plugin`) o cgo directo | El core es Rust (memoria segura), no C: el fallo que motivó el proceso separado ya no aplica. `purego` + `CGO_ENABLED=0` elimina binario worker, socket y pool de procesos. Protección equivalente en proceso: sentinels → 400/413, `recover()` → 500, probe de arranque fatal. |
 | Cola acotada por bytes y profundidad | Sin cola: `MAX_WORKERS` como único límite de admisión | Con 10 workers se midió 8,14 % de `503`. La cola convierte rechazo en latencia. |
 | `MAX_WORKERS=2` | 10 workers (valor por defecto del código) | Mismo throughput, el doble de errores y 986 MiB de memoria contra 584 MiB. |
 | `QUEUE_SIZE=56` | 32 (mejor p50 del barrido) | 34 slots en vuelo por réplica no alcanzan como margen para el desequilibrio del proxy: 0,66 % de errores. |
 | Sin caché de extracciones | Cachear por hash de documento | Los cuatro PDFs del enunciado rotan entre 100 VUs; la tasa de acierto sería alta, pero el enunciado no la pide y falsearía la medición de concurrencia. |
 | HTTP simple en el edge por defecto | Requerir el proxy compartido y TLS | `docker compose up --build` fallaría en una máquina limpia que no tenga esa red ni sus certificados. |
-| Arquitectura en 3 capas (`presentation` / `usecase` / `domain` / `infrastructure`) | Lógica de extracción embebida en los handlers HTTP | El handler consume el puerto `ExtractUsecase` (`handler.go:13`): el motor es un detalle de infraestructura, testeable sin HTTP ni PDFium y reemplazable sin tocar la capa web. |
+| Arquitectura en 3 capas (`presentation` / `usecase` / `domain` / `infrastructure`) | Lógica de extracción embebida en los handlers HTTP | El handler consume el puerto `ExtractUsecase` (`handler.go:13`): el motor es un detalle de infraestructura, testeable sin HTTP ni del motor nativo y reemplazable sin tocar la capa web. |
 | Admisión en dos capas: semáforo HTTP + cola acotada | Sólo la cola como límite de admisión | El semáforo (`main.go:48`) admite `MAX_WORKERS + QUEUE_SIZE` = 58 handlers y rechaza con `"server is saturated"` antes de leer un body de hasta 50 MB; la cola es el segundo límite. Ambos devuelven 503 con `application/problem+json`, los cuerpos que la sección 5.5 usa para diagnosticar. |
 | Deadline por petición (`WithDeadline`) | Confiar en que el cliente cierre la conexión | El trabajo encolado queda acotado a los 30 s de `WRITE_TIMEOUT` aunque el cliente siga conectado: el handler responde 503 y el job termina igual en la cola, así que ésta siempre drena (`middleware.go:43`, `workerpool.go:140`). |
-| Apagado ordenado: SIGTERM → `Shutdown` con 10 s → `Close` | Terminar el proceso directamente | Detrás de Traefik, un `docker compose down` no debe cortar conexiones en vuelo: primero se drena el HTTP y recién después la cola (`main.go:65-73`, `workerpool.go:150`). |
-| RPC sobre socket unix vía `go-plugin` | pipes stdin/stdout, HTTP en localhost, gRPC sobre TCP | Mismo host, sin abrir puertos ni exponer un servicio local; el transporte ya viene resuelto con `go-pdfium` (el socket aparece en el Anexo A). |
-| Pool de procesos con verificación al arranque, worker caliente y reemplazo | Un único proceso worker compartido por la réplica | `MaxTotal=2` procesos con `MinIdle=1` (`pool.go:16`): el primer pedido no paga el arranque ni el handshake, y una caída se repone sin parar la réplica (sección 2.2). |
+| Apagado ordenado: SIGTERM → `Shutdown` con 10 s → `Close` | Terminar el proceso directamente | Detrás de Traefik, un `docker compose down` no debe cortar conexiones en vuelo: primero se drena el HTTP y recién después la cola (`main.go:68-72`, `workerpool.go:150`). |
+| Probe de arranque del motor antes de aceptar tráfico | Descubrir que la lib no carga con `500` en cada petición | `buildExtractor` extrae un payload inválido y falla el arranque si el error no es `ErrInvalidPDF` (`main.go:21-30`): una lib faltante detiene el boot en lugar de degradar el servicio. |
+| `MAX_PAGES` (default 1000) → `413` | Sin límite de páginas por documento | Un PDF gigante no acota su propio costo de CPU/memoria; el tope se evalúa con `PageCount` antes de convertir (`extractor.go:66`) y responde 413. |
 | Stateless: sin base de datos ni escritura a disco | Persistir resultados o estado entre peticiones | Réplicas intercambiables y cero estado que sincronizar; complementa la fila "sin caché" de más arriba. |
 | Un solo `POST`, `multipart/form-data` o binario crudo, 50 MB, errores RFC 9457 y saturación como `503` | JSON con el PDF en base64 y `429` para saturación | Evita el +33 % de la codificación base64, el límite se aplica al leer (`payload.go:66`), y `503` dice "se saturó el servidor, reintenta" mientras que `429` implicaría un límite de tasa del cliente. |
 | `GOMAXPROCS` automático desde el cgroup (Go ≥ 1.25) | Fijarlo a mano en cada despliegue | Con `cpus: '1.0'` el cgroup de cada réplica tiene `cpu.max=100000 100000` y el runtime queda en 2 (Go redondea hacia arriba los límites menores a 2). El techo sigue siendo la cuota de 1 CPU, no `GOMAXPROCS`: subir `MAX_WORKERS` sólo reparte ese núcleo, que es lo que mide el barrido de la sección 4.2. |
@@ -151,31 +182,32 @@ Cuatro de esas decisiones merecen una prosa corta.
 
 **Las capas.** La regla de dependencias apunta hacia adentro: `presentation` e
 `infrastructure` dependen de `domain` y `usecase`, nunca al revés. El handler no
-conoce PDFium ni la cola: consume el puerto `ExtractUsecase` (`handler.go:13`),
+conoce el motor ni la cola: consume el puerto `ExtractUsecase` (`handler.go:13`),
 y la cola cuelga del mismo puerto adaptada en `queued_extractor.go`, de modo que
 el código HTTP no sabe si la extracción es síncrona o encolada. En la práctica,
-la migración de la sección 4.1 se resolvió en `internal/infrastructure/pdf` y
-`cmd/pdfium-worker` sin tocar handlers ni cola: cambiar de motor es cablear el
-arranque, no reescribir el servicio.
+la migración de PDFium a `pdf_oxide` se resolvió en
+`internal/infrastructure/pdf` y `cmd/server` (el probe de arranque) sin tocar
+handlers ni cola: cambiar de motor es cablear el arranque, no reescribir el
+servicio.
 
 **La admisión en dos capas.** El semáforo del middleware y la cola son límites
 independientes sobre el mismo número: la capacidad del semáforo es
-`MAX_WORKERS + QUEUE_SIZE` = 58 (`main.go:48`), que es exactamente lo que la
+`MAX_WORKERS + QUEUE_SIZE` = 58 (`main.go:47`), que es exactamente lo que la
 cola puede retener —2 trabajando y 56 encolados—. El semáforo actúa en la
 frontera HTTP, antes de leer un body de hasta 50 MB, y responde
 `"server is saturated"`; la cola es el segundo límite, con su propio rechazo por
-profundidad o por presupuesto de bytes (`workerpool.go:123-133`). Ambos llegan
+profundidad o por presupuesto de bytes (`workerpool.go:122-134`). Ambos llegan
 al cliente como 503 con `application/problem+json`. El `WithDeadline` cierra el
-circuito: pone 30 s a cada petición (`main.go:49`) y, si vence estando en la
+circuito: pone 30 s a cada petición (`main.go:48`) y, si vence estando en la
 cola, el handler responde 503 mientras el job termina igual —el canal de
 resultado es bufferizado, sección 2.3—, así que la cola nunca queda varada.
-Detalle de configuración: `MAX_WORKERS` gobierna a la vez los procesos del pool
-(`main.go:23`) y las goroutines de la cola (`main.go:44`); es un solo número
-para las dos mitades.
+Detalle de configuración: `MAX_WORKERS` es el único número que gobierna la
+concurrencia real: las goroutines de la cola (`main.go:43`) y, con ellas, cuántas
+extracciones de `pdf_oxide` compiten por la cuota de CPU.
 
 **El ciclo de vida.** Al recibir SIGTERM o SIGINT el servidor cierra el
 listener y espera hasta 10 s a que terminen las peticiones en vuelo
-(`main.go:65-73`); recién cuando `Shutdown` devuelve corren los `defer`, donde
+(`main.go:68-72`); recién cuando `Shutdown` devuelve corren los `defer`, donde
 `jobs.Close()` deja de aceptar trabajos y espera a que los ya encolados terminen
 (`workerpool.go:150`). Detrás de Traefik, una réplica retirada termina lo que
 tiene en curso en lugar de cortar conexiones a mitad de camino.
@@ -198,37 +230,44 @@ etiquetado como tal.
 
 | Herramienta | Alternativas descartadas | Motivo |
 | --- | --- | --- |
-| Go 1.26 | Python, Node.js, Java | El trabajo es CPU-bound sobre una biblioteca C: Go aporta binario único, goroutines baratas para la cola y los 58 trabajos en vuelo, y cgo para atar PDFium. Python queda mal servido por el GIL en CPU-bound y Node por su modelo de eventos; una JVM competiría con su propio runtime y GC por la caché de 1024 MiB. Decisión de diseño, no de benchmark: no se corrió la misma carga en otro lenguaje. |
-| `go-pdfium` + `go-plugin` (RPC por proceso) | cgo directo en el servidor; `pdftotext` como binario externo; Go puro (`pdfcpu`) | cgo directo es la migración inversa, ya descartada en la fila 1 de la sección 2.5: un `SIGSEGV` mataría la réplica. Un binario externo implica fork+exec por petición y parsear una salida de texto libre. `pdfcpu` (Apache-2.0) se consideró en el plan inicial (`tasks/plan.md`) y se descartó a favor de un motor nativo de extracción. `go-pdfium` trae el pool de procesos, el handshake y el reemplazo resueltos y mantenidos. |
+| Go 1.26 | Python, Node.js, Java | El trabajo es CPU-bound sobre una biblioteca nativa: Go aporta binario único, goroutines baratas para la cola y los 58 trabajos en vuelo. Python queda mal servido por el GIL en CPU-bound y Node por su modelo de eventos; una JVM competiría con su propio runtime y GC por la caché de 1024 MiB. Decisión de diseño, no de benchmark: no se corrió la misma carga en otro lenguaje. |
+| `pdf_oxide` (binding Go oficial) + `purego` | `go-pdfium` + `go-plugin` (versión anterior); cgo directo; `pdftotext` como binario externo; Go puro (`pdfcpu`) | El binding oficial trae el mismo core Rust que el crate, con Markdown estructurado incluido. `purego` (`dlopen` + `CGO_ENABLED=0`) evita toolchain de C en el build y permite que la librería se instale con el installer pineado en una etapa propia del Dockerfile. cgo directo reviviría el riesgo de enlace frágil; un binario externo implica fork+exec por petición; `pdfcpu` se descartó en su momento por falta de motor de extracción validado en el corpus. |
 | Traefik v3.6 (edge) | nginx, HAProxy | El provider de Docker con labels configura el enrutamiento sin generar archivos de configuración ni recargar nada —nginx exige templates y reload, HAProxy configuración estática— y reutiliza el edge con TLS que la máquina ya tenía (sección 6.1). |
-| Docker multi-stage (etapas `pdfium` → `builder` → `test` → `runtime`) | Imagen única de build | cgo necesita toolchain y headers para compilar y el runtime sólo la `.so`; separarlas mantiene la imagen final en `bookworm-slim` con usuario sin privilegios. Ver nota abajo. |
+| Docker multi-stage (etapas `oxide` → `builder` → `test` → `runtime`) | Imagen única de build | El installer de `libpdf_oxide` y la compilación del servidor no necesitan las mismas herramientas; separarlas mantiene la imagen final en `bookworm-slim` con usuario sin privilegios y `CGO_ENABLED=0`. Ver nota abajo. |
 
 **Motores de extracción.** Ésta es la única decisión de esta sección que pasó
-por evaluación real (sección 4.1):
+por evaluación real (sección 4.1 y la migración documentada en §5.7):
 
 | Motor | Licencia | Evaluación |
 | --- | --- | --- |
-| **PDFium** vía `go-pdfium` | BSD-3-Clause | Elegido. El motor de Chromium, mediado por proceso, de modo que un fallo no mata la réplica. |
+| **`pdf_oxide`** (core Rust, binding Go oficial) | MIT / Apache-2.0 | **Elegido (actual).** Markdown estructurado in-process, memoria segura en Rust, instalación con installer pineado, sin CGO. Costo: ~4× la extracción en texto crudo (§5.7). |
+| **PDFium** vía `go-pdfium` | BSD-3-Clause | Versión anterior. El motor de Chromium, mediado por proceso para que un fallo no matare la réplica; reemplazado por `pdf_oxide`. Sus mediciones son la línea base de las secciones 3 a 5.6. |
 | MuPDF (binding `go-fitz`) | AGPL-3 / comercial | Evaluado y descartado por medición: `SIGSEGV` reproducible con los PDFs del corpus (sección 4.1). Además, la AGPL obliga a publicar el código si el servicio se ofrece por red. |
 | Poppler (`pdftotext`) | GPL-2.0 | No evaluado; descartado a priori: CLI, o sea fork+exec por petición y una salida libre en lugar de una API estructurada. |
 | Apache PDFBox | Apache-2.0 | No evaluado; descartado a priori: una JVM completa dentro de un contenedor limitado a 1024 MiB, compitiendo por la misma memoria. |
 | pdfminer.six / PyMuPDF | MIT / AGPL-3 | No evaluado; descartado a priori: Python para trabajo CPU-bound por el GIL, y PyMuPDF hereda la AGPL de MuPDF. |
 | pdfcpu (Go puro) | Apache-2.0 | Considerado en el plan inicial y descartado a favor de un motor nativo de extracción ya probado en el corpus. |
 
-**Nota sobre el multi-stage.** La etapa `pdfium` separa headers (build) de la
-`.so` (runtime); `builder` compila los dos binarios con `-trimpath` y
-`ldflags -s -w`; la etapa `test` corre `go vet`, las unitarias y las de
-integración con PDFium real dentro del build —`docker build --target test` es la
-verificación ejecutable de la sección 6.4—; y `runtime` copia sólo `server`,
-`pdfium-worker` y `libpdfium.so` sobre `bookworm-slim`, con usuario no root. Dos
-límites explícitos: `cgo` ató el build a linux/amd64 (`Dockerfile:70`), y el
-incidente de la sección 5.1 —un `.dockerignore` que excluía los mismos paths que
-el `Dockerfile` compilaba— es el contraejemplo de por qué hay que levantar la
-pila completa en una máquina limpia y no sólo correr los tests en el host.
+**Nota sobre el multi-stage.** La etapa `oxide` instala `libpdf_oxide.so` con
+el installer pineado (`cmd/install@v0.3.78 -shared`); `builder` compila el
+servidor con `-trimpath`, `CGO_ENABLED=0` y `ldflags -s -w`; la etapa `test`
+corre `go vet`, las unitarias y las de integración con la librería real dentro
+del build —`docker build --target test` es la verificación ejecutable de la
+sección 6.4—; y `runtime` copia sólo `server` y `libpdf_oxide.so` sobre
+`bookworm-slim`, con usuario no root y `PDF_OXIDE_LIB_PATH` apuntando a la
+librería. El contraejemplo de por qué hay que levantar la pila completa en una
+máquina limpia y no sólo correr los tests en el host sigue siendo el incidente
+del `.dockerignore` de la sección 5.1.
 
 ---
 
 ## 3. El cuello de botella identificado
+
+> **Nota histórica.** Las mediciones de esta sección corresponden a la versión
+> con PDFium (51,5 ms por extracción en texto crudo). Con `pdf_oxide` el
+> perfil cambió: la conversión a Markdown cuesta ~226 ms CPU/req —ver §5.7—,
+> pero la conclusión de diseño se mantiene y se refuerza: el límite es la CPU
+> por réplica.
 
 ### 3.1 Perfil por fase
 
@@ -283,7 +322,10 @@ el trabajo de la sección 4.
 
 ## 4. Proceso de investigación
 
-Esta sección es la que documenta cómo se llegó a la configuración final.
+Esta sección es la que documenta cómo se llegó a la configuración final de la
+versión con PDFium. La migración posterior a `pdf_oxide` (§5.7) conservó esa
+configuración de cola y admisión: barrido, perillas y experimentos siguen
+siendo la referencia de cómo se eligió.
 
 ### 4.1 Punto de partida: un motor que se caía
 
@@ -298,6 +340,10 @@ de motor por variable de entorno. Dos problemas marcaron la decisión:
 La migración a **PDFium** (vía `go-pdfium`, que además usa `go-plugin` y provee el
 aislamiento de proceso por diseño) eliminó ambos problemas. El selector se borró: la
 decisión queda ahora en el código y no en una variable de entorno.
+
+La tercera etapa —la vigente— reemplazó PDFium por **`pdf_oxide`** in-process
+(§2.2 y §5.7): mismo criterio de "la decisión queda en el código", ahora con
+un core Rust que no necesita el aislamiento de proceso.
 
 ### 4.2 Barrido de configuración
 
@@ -380,6 +426,10 @@ replicas=5         cpus: 1.0, memory: 1024M por réplica
 
 ## 5. Comparativa de métricas: antes y después
 
+> Las secciones 5.1 a 5.6 comparan configuraciones de la versión con PDFium y
+> se conservan como línea base. La sección **5.7** reporta las métricas del motor
+> actual (`pdf_oxide`) contra la misma referencia.
+
 ### 5.1 Diseño del experimento
 
 Para comparar dos configuraciones no alcanza con medirlas por separado: si el host se
@@ -432,9 +482,10 @@ reintentar un `503`, pero no puede recuperar trabajo que se descartó.
 
 Perfil de k6 del enunciado, 100 VUs, contra el edge con el host vacío
 (`TARGET` sin definir, o sea `http://127.0.0.1:8080`). Medianas de las 7 corridas
-limpias de la sesión: 10 958 peticiones en total.
+limpias de la sesión: 10 958 peticiones en total. **Versión con PDFium**; la
+versión actual con `pdf_oxide` está en §5.7.
 
-| Métrica | Referencia | Este servicio | |
+| Métrica | Referencia | Este servicio (PDFium) | |
 | --- | ---: | ---: | --- |
 | Throughput | 25,35 req/s | **34,43 req/s** | **+35,8 %** |
 | Errores | 0,00 % | 1,62 % (178 de 10 958) | +1,62 pp |
@@ -528,6 +579,64 @@ corridas que forman las medianas no intercambiaron memoria de forma apreciable.
 El `load average` del host llegó a 17,7 durante una tanda, por lo que se esperó a
 que bajara de 2 antes de medir.
 
+### 5.7 Métricas tras la migración a `pdf_oxide`
+
+Las secciones 5.2 a 5.6 midieron la versión con PDFium. Tras reemplazar la
+extracción por `pdf_oxide` in-process (`ToMarkdownAll`, `MAX_PAGES=1000`,
+mismo compose, mismos perfiles de carga), se repitieron las dos pruebas
+contra el edge (`http://127.0.0.1:8080`), con el host compartido con el
+editor y el navegador:
+
+| Métrica | Referencia (§5.4) | PDFium (§5.4) | **`pdf_oxide`** | Gate T8 |
+| --- | ---: | ---: | ---: | --- |
+| k6 throughput | 25,35 req/s | 34,43 req/s | **14,9–15,1 req/s** | ≥ 25,35 — **no** |
+| k6 errores | 0,00 % | 1,62 % | **0,00 %** | 0,00 % — **sí** |
+| k6 p50 | 1,88 s | 1,83 s | **5,06–5,25 s** | < 1,88 s — **no** |
+| k6 p90 | 7,83 s | 6,18 s | **10,1–10,3 s** | < 7,83 s — **no** |
+| k6 p95 | 8,80 s | 7,02 s | **12,1–12,2 s** | < 8,80 s — **no** |
+| k6 máximo | 13,94 s | 7,60 s | **13,2 s** | < 13,94 s — **sí** |
+| Vegeta éxito | 66,53 % | 98,4–99,3 % | **100,00 %** | > 66,53 % — **sí** |
+| Vegeta p50 / p90 / p95 / máx | — | 0,42–0,46 / ~5 / ~6,7 / ~7,9 s | **2,36 / 7,31 / 8,51 / 9,20 s** | — |
+
+Dos corridas de k6 (14,88 y 15,05 req/s, 721 peticiones, 0 fallos) y una de
+Vegeta (578 peticiones, todas `200`) sostienen la tabla. Los checks de k6
+(`status is 200`, `returns markdown content`) pasaron al 100 %: **ninguna
+petición falló ni devolvió texto crudo**.
+
+**Por qué el throughput bajó.** No es un cuello de botella de la cola ni del
+transporte: es CPU por réplica, el mismo techo de las secciones 3–4 con un
+motor más caro. Medido en el host con `time` sobre el corpus completo:
+
+| Documento | Páginas | PDFium (§3.1) | `pdf_oxide` (`ToMarkdownAll`) |
+| --- | ---: | ---: | ---: |
+| Scrum Guide | 16 | 51,5 ms | ~136 ms |
+| Historias / Filosofía | ~10–40 | — | ~199–209 ms |
+| Tablero Kanban | 90 | — | ~358 ms |
+| **Promedio** | — | **51,5 ms** | **~226 ms** |
+
+~4× más CPU por petición. Con 5 réplicas × `cpus: 1.0` = 5 CPUs de cuota, el
+techo teórico es `5 / 0,226 ≈ 22 req/s`; medido bajo carga los contenedores
+quedan al 100 % de su cuota y el sistema entrega ~15 req/s (k6 mide 14,9–15,1;
+la diferencia contra el techo es el edge, k6 y el resto del host compartiendo
+los mismos 6 núcleos). Pasar los 25,35 req/s de la referencia exigiría
+ampliar la cuota de CPU de las réplicas —fuera del alcance de esta
+migración, que no tocó `docker-compose.yml`— o un motor de conversión más
+barato.
+
+**Qué sí mejoró.** Los `503` de la sección 5.5 desaparecieron (0,00 %) y
+Vegeta sirvió el 100 % de las peticiones: ~0,7 puntos por encima de la mejor
+marca de la versión anterior (99,26 %) y 33 sobre la referencia (66,53 %). La
+admisión en dos capas y la cola siguen haciendo su trabajo: bajo saturación
+el servicio degrada a latencia (p50 ~5 s con 100 VUs en vuelo) y nunca a
+rechazo.
+
+**Riesgo residual documentado** (§2.2): la conversión nativa no es
+cancelable por contexto; con `QUEUE_SIZE=56` × 5 réplicas hay hasta 290
+trabajos en vuelo y cada uno puede retener un worker hasta que el motor
+retorne. El `WRITE_TIMEOUT` de 30 s hace *shed* de los clientes en espera,
+pero el trabajo ya encolado corre hasta completarse; `MAX_PAGES=1000` acota
+el peor caso por documento.
+
 ---
 
 ## 6. Entregables y reproducción
@@ -576,11 +685,16 @@ targets desde un programa.
 
 ```bash
 docker build --target test -t pdf-extract-md:test .
-docker run --rm -e PDFIUM_WORKER_PATH=/out/pdfium-worker \
-  --entrypoint go pdf-extract-md:test test -count=1 -tags integration ./...
 ```
 
-8 pruebas de integración con PDFium real sobre los PDFs del corpus.
+La etapa `test` corre `go vet`, las unitarias y las de integración con la
+librería real de `pdf_oxide` sobre los PDFs del corpus (`-tags integration`,
+con `PDF_OXIDE_LIB_PATH` fijado en la etapa). Localmente:
+
+```bash
+make test          # go vet + go test, con CGO_ENABLED=0
+make test-integration  # requiere PDF_OXIDE_LIB_PATH (librería real)
+```
 
 ### 6.5 Inventario de entregables
 
