@@ -2,99 +2,106 @@ package pdf
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"unicode"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
-	"github.com/klippa-app/go-pdfium"
-	"github.com/klippa-app/go-pdfium/references"
-	"github.com/klippa-app/go-pdfium/requests"
+	pdfoxide "github.com/yfedoseev/pdf_oxide/go"
 )
 
-type pdfiumExtractor struct {
-	pool pdfium.Pool
+// document is the read-side view of an opened PDF the extractor needs.
+type document interface {
+	PageCount() (int, error)
+	// ToMarkdownAll is the engine's own Markdown converter.
+	ToMarkdownAll() (string, error)
+	Close() error
 }
 
-// NewExtractor returns the PDFium-backed adapter for the usecase.Extractor
-// port. The concrete type is returned so the business layer depends on the
-// port it declares rather than on this package.
-func NewExtractor(pool pdfium.Pool) *pdfiumExtractor {
-	return &pdfiumExtractor{pool: pool}
+// extractor adapts the pdf_oxide Go binding to the usecase.Extractor port.
+// The concrete type is unexported so the business layer depends on the port it
+// declares rather than on this package.
+type extractor struct {
+	maxPages int
+	open     func([]byte) (document, error)
 }
 
-func (e *pdfiumExtractor) Extract(ctx context.Context, data []byte) (string, int, error) {
+// NewExtractor returns the pdf_oxide-backed adapter. A maxPages of 0 disables
+// the per-document page limit.
+func NewExtractor(maxPages int) *extractor {
+	return &extractor{
+		maxPages: maxPages,
+		open: func(data []byte) (document, error) {
+			return pdfoxide.OpenFromBytes(data)
+		},
+	}
+}
+
+// Extract converts a PDF payload into Markdown via the engine's own
+// ToMarkdownAll. ctx is part of the port only: the native conversion cannot be
+// cancelled mid-call and the worker pool runs it with context.Background(), so
+// admission control and request deadlines upstream bound how long callers wait.
+func (e *extractor) Extract(_ context.Context, data []byte) (content string, pages int, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			content, pages = "", 0
+			err = domain.ErrExtractionFailed
+		}
+	}()
+
 	if len(data) == 0 {
 		return "", 0, domain.ErrInvalidPDF
 	}
 
-	pdfiumInstance, err := e.pool.GetInstanceWithContext(ctx)
+	doc, err := e.open(data)
+	if err != nil {
+		return "", 0, mapOpenError(err)
+	}
+	defer func() { _ = doc.Close() }()
+
+	pages, err = doc.PageCount()
 	if err != nil {
 		return "", 0, domain.ErrExtractionFailed
 	}
-	defer pdfiumInstance.Close()
-
-	doc, err := pdfiumInstance.OpenDocument(&requests.OpenDocument{
-		File: &data,
-	})
-	if err != nil {
-		return "", 0, domain.ErrInvalidPDF
+	if e.maxPages > 0 && pages > e.maxPages {
+		return "", 0, domain.ErrTooLarge
 	}
-	defer pdfiumInstance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{
-		Document: doc.Document,
-	})
 
-	pageCountResp, err := pdfiumInstance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{
-		Document: doc.Document,
-	})
+	content, err = doc.ToMarkdownAll()
 	if err != nil {
 		return "", 0, domain.ErrExtractionFailed
 	}
-	pageCount := pageCountResp.PageCount
 
-	var builder strings.Builder
-	for i := 0; i < pageCount; i++ {
-		pageText, _ := extractPageText(pdfiumInstance, doc.Document, i)
-		if pageText != "" {
-			builder.WriteString(pageText)
-			if i < pageCount-1 {
-				builder.WriteString("\n\n")
-			}
-		}
-	}
-
-	return builder.String(), pageCount, nil
+	return sanitize(content), pages, nil
 }
 
-func extractPageText(inst pdfium.Pdfium, doc references.FPDF_DOCUMENT, pageIndex int) (string, error) {
-	textResp, err := inst.FPDFText_LoadPage(&requests.FPDFText_LoadPage{
-		Page: requests.Page{
-			ByIndex: &requests.PageByIndex{
-				Document: doc,
-				Index:    pageIndex,
-			},
-		},
-	})
-	if err != nil {
-		return "", err
+// mapOpenError translates pdf_oxide open failures into domain errors: an
+// unparseable payload is the caller's fault, anything else is ours.
+func mapOpenError(err error) error {
+	switch {
+	case errors.Is(err, pdfoxide.ErrInvalidFormat),
+		errors.Is(err, pdfoxide.ErrParseError),
+		errors.Is(err, pdfoxide.ErrDocumentNotFound),
+		errors.Is(err, pdfoxide.ErrInvalidPath):
+		return domain.ErrInvalidPDF
+	default:
+		return domain.ErrExtractionFailed
 	}
-	defer inst.FPDFText_ClosePage(&requests.FPDFText_ClosePage{
-		TextPage: textResp.TextPage,
-	})
+}
 
-	charCountResp, err := inst.FPDFText_CountChars(&requests.FPDFText_CountChars{
-		TextPage: textResp.TextPage,
-	})
-	if err != nil || charCountResp.Count <= 0 {
-		return "", nil
+// sanitize normalizes the engine output so clients always receive plain
+// LF-terminated Markdown: PDF extraction can emit bare CRs and control
+// characters, and documents may end in stray whitespace.
+func sanitize(markdown string) string {
+	withLF := strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(markdown)
+
+	var b strings.Builder
+	b.Grow(len(withLF))
+	for _, r := range withLF {
+		if unicode.IsControl(r) && r != '\n' && r != '\t' {
+			continue
+		}
+		b.WriteRune(r)
 	}
-
-	getResp, err := inst.FPDFText_GetText(&requests.FPDFText_GetText{
-		TextPage:   textResp.TextPage,
-		StartIndex: 0,
-		Count:      charCountResp.Count,
-	})
-	if err != nil {
-		return "", err
-	}
-
-	return getResp.Text, nil
+	return strings.TrimRightFunc(b.String(), unicode.IsSpace)
 }
