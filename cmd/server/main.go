@@ -12,31 +12,30 @@ import (
 	"time"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/config"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/infrastructure/pdf"
 	httppres "github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/presentation/http"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/usecase"
 )
 
-func buildExtractor(cfg *config.Config) (usecase.Extractor, func(), error) {
-	pool, err := pdf.NewPool(pdf.PoolConfig{
-		WorkerPath: cfg.PdfiumWorkerPath,
-		Workers:    cfg.MaxWorkers,
-		OnLogEvent: func(event string) { log.Printf("pdfium pool: %s", event) },
-	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("pdfium pool: %w", err)
+func buildExtractor(cfg *config.Config) (usecase.Extractor, error) {
+	extractor := pdf.NewExtractor(cfg.MaxPages)
+	// Boot probe: the engine rejecting an invalid payload proves the native
+	// library loaded; any other failure must stop the server before traffic.
+	if _, _, err := extractor.Extract(context.Background(), []byte("startup probe")); err != nil &&
+		!errors.Is(err, domain.ErrInvalidPDF) {
+		return nil, fmt.Errorf("pdf_oxide unavailable: %w", err)
 	}
-	return pdf.NewExtractor(pool), func() { _ = pool.Close() }, nil
+	return extractor, nil
 }
 
 func main() {
 	cfg := config.Load()
 
-	extractor, closeEngine, err := buildExtractor(cfg)
+	extractor, err := buildExtractor(cfg)
 	if err != nil {
 		log.Fatalf("extractor unavailable: %v", err)
 	}
-	defer closeEngine()
 
 	uc := usecase.NewExtractUsecase(extractor)
 

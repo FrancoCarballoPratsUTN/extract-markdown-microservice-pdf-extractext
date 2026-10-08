@@ -61,7 +61,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, domain.ErrServiceUnavailable):
 			domain.WriteProblem(w, domain.NewProblem(http.StatusServiceUnavailable, "Service Unavailable", err.Error()))
 			return
-		case errors.Is(err, domain.ErrExtractionFailed), errors.Is(err, domain.ErrTooLarge):
+		case errors.Is(err, domain.ErrTooLarge):
+			domain.WriteProblem(w, domain.NewProblem(http.StatusRequestEntityTooLarge, "Payload Too Large", "pdf exceeds maximum page count"))
+			return
+		case errors.Is(err, domain.ErrExtractionFailed):
 			domain.WriteProblem(w, domain.NewProblem(http.StatusInternalServerError, "Internal Server Error", err.Error()))
 			return
 		default:

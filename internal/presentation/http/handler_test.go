@@ -161,6 +161,25 @@ func TestExtractHandlerInvalidPDFReturns400RFC9457(t *testing.T) {
 	}
 }
 
+func TestExtractHandlerTooManyPagesReturns413RFC9457(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/extract", strings.NewReader("%PDF-1.7"))
+	req.Header.Set("Content-Type", "application/pdf")
+
+	rec := httptest.NewRecorder()
+	h := newTestHandler(&fakeUsecase{err: domain.ErrTooLarge})
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("expected application/problem+json, got %s", ct)
+	}
+	if !strings.Contains(rec.Body.String(), `"status":413`) {
+		t.Fatalf("expected problem details 413, got %s", rec.Body.String())
+	}
+}
+
 func TestExtractHandlerExtractionFailedReturns500RFC9457(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/extract", strings.NewReader("%PDF-1.7"))
 	req.Header.Set("Content-Type", "application/pdf")
