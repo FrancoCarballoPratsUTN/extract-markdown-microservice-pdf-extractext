@@ -2,12 +2,14 @@ package pdf
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/klippa-app/go-pdfium"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
 )
 
 const (
@@ -16,16 +18,15 @@ const (
 	extractBudget = 60 * time.Second
 )
 
-// workerPath resolves the compiled worker binary. The container test stage
-// builds it and exports PDFIUM_WORKER_PATH; a local run must build it first
-// with: go build -o bin/pdfium-worker ./cmd/pdfium-worker
-func workerPath(t *testing.T) string {
+// requireNativeLib skips the run when the pdf_oxide shared library path is
+// unset: the purego backend dlopens it at runtime, so tests without the lib
+// would fail instead of running meaningfully. The container test stage exports
+// it; locally run: go run github.com/yfedoseev/pdf_oxide/go/cmd/install@v0.3.78 -shared
+func requireNativeLib(t *testing.T) {
 	t.Helper()
-	path := os.Getenv("PDFIUM_WORKER_PATH")
-	if path == "" {
-		t.Skip("PDFIUM_WORKER_PATH is unset: build cmd/pdfium-worker and export its path")
+	if os.Getenv("PDF_OXIDE_LIB_PATH") == "" {
+		t.Skip("PDF_OXIDE_LIB_PATH is unset: install the pdf_oxide shared library and export its path")
 	}
-	return path
 }
 
 func readFixture(t *testing.T, name string) []byte {
@@ -44,27 +45,10 @@ func extractCtx(t *testing.T) context.Context {
 	return ctx
 }
 
-func newTestPool(t *testing.T) pdfium.Pool {
-	t.Helper()
-	pool, err := NewPool(PoolConfig{
-		WorkerPath:   workerPath(t),
-		Workers:      1,
-		StartTimeout: extractBudget,
-	})
-	if err != nil {
-		t.Fatalf("NewPool() error = %v", err)
-	}
-	t.Cleanup(func() { _ = pool.Close() })
-	return pool
-}
+func TestExtractorReturnsMarkdownFromRealPDF(t *testing.T) {
+	requireNativeLib(t)
 
-// Regression guard for the defect where the pool was created without a Command,
-// so no worker process could be spawned and every request failed with
-// "extraction failed" while the server stayed up.
-func TestExtractorReturnsTextFromRealPDF(t *testing.T) {
-	extractor := NewExtractor(newTestPool(t))
-
-	content, pageCount, err := extractor.Extract(extractCtx(t), readFixture(t, scrumGuidePDF))
+	content, pageCount, err := NewExtractor(2000).Extract(extractCtx(t), readFixture(t, scrumGuidePDF))
 
 	if err != nil {
 		t.Fatalf("Extract() error = %v, want nil", err)
@@ -73,16 +57,41 @@ func TestExtractorReturnsTextFromRealPDF(t *testing.T) {
 		t.Errorf("pageCount = %d, want 16", pageCount)
 	}
 	if content == "" {
-		t.Error("content is empty, want extracted text")
+		t.Fatal("content is empty, want markdown")
+	}
+
+	hasHeading := false
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "# ") {
+			hasHeading = true
+			break
+		}
+	}
+	if !hasHeading {
+		t.Error("content has no markdown heading (# …)")
+	}
+	if strings.ContainsRune(content, '\r') {
+		t.Error("content contains carriage returns")
+	}
+	for _, r := range content {
+		if r < 0x20 && r != '\n' && r != '\t' {
+			t.Errorf("content contains control character %#U", r)
+			break
+		}
+	}
+	if content != strings.TrimRight(content, " \t\n") {
+		t.Errorf("content has trailing whitespace: %q", content[len(content)-10:])
 	}
 }
 
 func TestExtractorRejectsCorruptPDF(t *testing.T) {
-	truncated := readFixture(t, scrumGuidePDF)[:2048]
+	requireNativeLib(t)
 
-	_, _, err := NewExtractor(newTestPool(t)).Extract(extractCtx(t), truncated)
+	garbage := []byte("garbage payload that is not a pdf at all")
 
-	if err == nil {
-		t.Fatal("Extract() error = nil, want a corrupt-document error")
+	_, _, err := NewExtractor(2000).Extract(extractCtx(t), garbage)
+
+	if !errors.Is(err, domain.ErrInvalidPDF) {
+		t.Fatalf("Extract() error = %v, want ErrInvalidPDF", err)
 	}
 }
