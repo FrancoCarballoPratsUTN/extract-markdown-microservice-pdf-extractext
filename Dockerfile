@@ -1,64 +1,37 @@
 # syntax=docker/dockerfile:1
 
-# PDFium build that the go-pdfium v1.21.x test matrix runs against. Bumping this
-# requires re-verifying the integration tests.
-ARG PDFIUM_VERSION=8057
+# pdf_oxide version pinned to match go.mod. Bumping it requires re-verifying the
+# integration tests and the installer output path below.
+ARG PDF_OXIDE_VERSION=v0.3.78
 
 # ---------------------------------------------------------------------------
-# PDFium native library.
+# pdf_oxide native library.
 #
-# Kept as its own stage so the builder gets headers plus the shared library for
-# cgo, and the runtime image gets only the .so it loads at execution time.
+# Kept as its own stage so the runtime and the test target get only the shared
+# library they dlopen via PDF_OXIDE_LIB_PATH (purego, CGO_ENABLED=0).
 # ---------------------------------------------------------------------------
-FROM golang:1.26-bookworm AS pdfium
+FROM golang:1.26-bookworm AS oxide
 
-ARG PDFIUM_VERSION
+ARG PDF_OXIDE_VERSION
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN go run github.com/yfedoseev/pdf_oxide/go/cmd/install@${PDF_OXIDE_VERSION} \
+        -shared \
+        -dir /opt/pdf_oxide \
+    && test -f /opt/pdf_oxide/lib/linux_amd64/libpdf_oxide.so
 
-# Libs and Cflags carry literal paths, not ${libdir}-style references: Go parses
-# pkg-config output as shell flags and rejects an unquoted '$'.
-RUN set -eux; \
-    mkdir -p /opt/pdfium; \
-    curl -fsSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${PDFIUM_VERSION}/pdfium-linux-x64.tgz" -o /tmp/pdfium.tgz; \
-    tar -C /opt/pdfium -xzf /tmp/pdfium.tgz; \
-    rm -f /tmp/pdfium.tgz; \
-    printf '%s\n' \
-        'prefix=/opt/pdfium' \
-        'libdir=/opt/pdfium/lib' \
-        'includedir=/opt/pdfium/include' \
-        '' \
-        'Name: PDFium' \
-        'Description: PDFium' \
-        "Version: ${PDFIUM_VERSION}" \
-        'Requires:' \
-        '' \
-        'Libs: -L/opt/pdfium/lib -lpdfium' \
-        'Cflags: -I/opt/pdfium/include' \
-        > /opt/pdfium/pdfium.pc; \
-    test -f /opt/pdfium/lib/libpdfium.so; \
-    test -f /opt/pdfium/include/fpdfview.h
-
-# Every stage derived from this one needs both variables: pkg-config resolves the
-# cgo flags at link time, the dynamic loader resolves the library at run time.
-ENV PKG_CONFIG_PATH=/opt/pdfium \
-    LD_LIBRARY_PATH=/opt/pdfium/lib
-
+# Flat, immutable path so every stage and the runtime share one env value.
 # ---------------------------------------------------------------------------
-# Build the server and the PDFium worker.
+# Build the server.
 #
-# Two binaries, not one: the server speaks go-plugin to worker processes so a
-# PDFium crash cannot take down the HTTP runtime.
+# CGO_ENABLED=0: the engine is loaded at run time with purego, so the Go binary
+# is fully static and needs no C toolchain in the build image.
 # ---------------------------------------------------------------------------
-FROM pdfium AS builder
+FROM golang:1.26-bookworm AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
-        pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+# CGO_ENABLED must be a build-time constant, not just a flag on one RUN: the
+# test stage inherits it and with cgo enabled pdfoxide compiles its cgo binding
+# (which needs a C toolchain and the static library this image does not have).
+ENV CGO_ENABLED=0
 
 WORKDIR /src
 
@@ -67,39 +40,40 @@ RUN go mod download
 
 COPY . .
 
-# cgo cannot cross-compile, so this image is linux/amd64 only.
-RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server && \
-    CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/pdfium-worker ./cmd/pdfium-worker
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
 
 # ---------------------------------------------------------------------------
-# Test target. Carries the real PDFium library so the integration tests exercise
-# the same code path the runtime image does.
+# Test target. Carries the real pdf_oxide library so the integration tests
+# exercise the same code path the runtime image does.
 #
 #   docker build --target test .
 # ---------------------------------------------------------------------------
 FROM builder AS test
 
-ENV PDFIUM_WORKER_PATH=/out/pdfium-worker
+COPY --from=oxide /opt/pdf_oxide/lib/linux_amd64/libpdf_oxide.so /opt/pdf_oxide/libpdf_oxide.so
 
-RUN go vet ./...
-RUN go test ./...
-RUN go test -tags integration -v -timeout 5m ./internal/infrastructure/pdf/
+ENV PDF_OXIDE_LIB_PATH=/opt/pdf_oxide/libpdf_oxide.so
+
+RUN go vet ./... \
+    && go test ./... \
+    && go test -tags unit ./... \
+    && go test -tags integration -timeout 5m ./internal/infrastructure/pdf/
 
 # ---------------------------------------------------------------------------
-# Runtime: server + worker + libpdfium.so, nothing else.
+# Runtime: server + libpdf_oxide.so, nothing else.
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
-        libstdc++6 \
+        libgcc-s1 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 1000 appuser
 
-COPY --from=pdfium /opt/pdfium/lib/libpdfium.so /opt/pdfium/lib/
-COPY --from=builder /out/server /out/pdfium-worker /app/
+COPY --from=oxide /opt/pdf_oxide/lib/linux_amd64/libpdf_oxide.so /opt/pdf_oxide/libpdf_oxide.so
+COPY --from=builder /out/server /app/
 
-ENV LD_LIBRARY_PATH=/opt/pdfium/lib
+ENV PDF_OXIDE_LIB_PATH=/opt/pdf_oxide/libpdf_oxide.so
 
 WORKDIR /app
 USER appuser
