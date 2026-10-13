@@ -154,7 +154,7 @@
 - [x] Enforces max upload size
 - [x] Calls usecase and returns JSON with status 200 on success
 - [x] Proper error responses using RFC 9457 Problem Details (400 for bad request, 413 if too large, 500 for extraction errors, 503/429 for saturated)
-- [x] Logs to stdout (JSON or structured)
+- [x] Logs to stdout (JSON or structured) — structured `log/slog` logging (JSON/text, `request_id`, access log) landed in `tasks/plan-markdown.md` Parte 2 (T10–T21).
 
 **Verification:**
 - [x] Manual test with curl against sample PDF

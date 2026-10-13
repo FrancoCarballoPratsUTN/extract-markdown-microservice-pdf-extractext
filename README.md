@@ -90,11 +90,42 @@ go test -tags integration ./...
 | `QUEUE_SIZE` | `56` | Capacidad de la cola por réplica |
 | `QUEUE_MAX_MB` | `256` | Límite de bytes de trabajos activos y pendientes |
 | `READ_TIMEOUT` / `WRITE_TIMEOUT` | `30` | Tiempo de espera en segundos |
+| `SHUTDOWN_TIMEOUT` | `35` | Deadline (segundos) para dejar de aceptar y drenar la cola al apagar |
+| `LOG_LEVEL` | `info` | Nivel mínimo: `debug`, `info`, `warn` o `error` |
+| `LOG_FORMAT` | `json` | Formato de los logs: `json` o `text` |
 | `PDF_OXIDE_LIB_PATH` | — | Ruta de `libpdf_oxide.so` (obligatoria) |
+
+Los defaults de la tabla son los del archivo Compose (despliegue recomendado);
+si una variable no llega, `internal/config` aplica sus propios defaults
+(`MAX_WORKERS=10`, `QUEUE_SIZE=16`, el resto igual) y aborta el arranque ante un
+valor inválido. `LOG_LEVEL`/`LOG_FORMAT` los lee `internal/logging` y también son
+*fail-fast*: un valor desconocido impide el arranque.
 
 `MAX_WORKERS` se ajusta a la cuota de CPU de cada réplica. Con la configuración
 del archivo Compose, dos trabajadores superan a uno y cuatro en rendimiento.
 La admisión máxima por réplica es `MAX_WORKERS + QUEUE_SIZE`.
+
+## Logging
+
+El servicio emite logs estructurados a `stdout`. Cada petición lleva un
+`request_id`: se reutiliza el `X-Request-ID` entrante o se genera uno con
+`crypto/rand`, y se devuelve en el mismo header para poder correlacionar la
+respuesta con los logs.
+
+- **Access log** (`"http request"`): una línea por petición con `method`, `path`,
+  `status`, `bytes`, `remote_addr`, `request_id` y `duration_ms`. El nivel sigue
+  al status: 5xx ⇒ `ERROR`, 4xx ⇒ `WARN`, el resto ⇒ `INFO`.
+- **Pipeline**: la cola emite `"worker pool started"` al arrancar,
+  `"extraction completed"` (`pages`, `duration_ms`, `request_id`) o
+  `"extraction failed"`, y `"queue full; rejecting job"` cuando se satura.
+- **Arranque/apagado**: `"application starting"` con la configuración efectiva,
+  `"server listening"`, `"shutting down"`, `"worker pool drained"`. Un error de
+  apagado (`"application stopped"`) sale con código ≠ 0.
+- Un `panic` en el extractor o en un handler se recupera, se registra con
+  `stack` y se responde `500`.
+- Los logs **nunca** incluyen el cuerpo del PDF ni rutas de fichero.
+
+En local se puede forzar el detalle: `LOG_LEVEL=debug LOG_FORMAT=text make run`.
 
 ## Organización del código
 

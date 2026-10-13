@@ -5,6 +5,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
 )
 
 type fakeUsecase struct {
@@ -30,6 +32,7 @@ func newTestHandler(uc ExtractUsecase) *handler {
 			return int64(mb) << 20
 		},
 		maxUploadMB: 50,
+		logger:      logging.Discard(),
 	}
 }
 
@@ -131,6 +134,7 @@ func TestExtractHandlerPayloadTooLargeReturns413RFC9457(t *testing.T) {
 		uc:          &fakeUsecase{},
 		maxBytes:    func(mb int) int64 { return 4 },
 		maxUploadMB: 1,
+		logger:      logging.Discard(),
 	}
 	h.ServeHTTP(rec, req)
 
@@ -196,6 +200,20 @@ func TestExtractHandlerExtractionFailedReturns500RFC9457(t *testing.T) {
 	}
 }
 
+func TestExtractHandlerReturnsHealthz(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	h := newTestHandler(&fakeUsecase{})
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); body != "ok" {
+		t.Fatalf("expected ok, got %q", body)
+	}
+}
+
 func TestExtractHandlerServiceUnavailableReturns503RFC9457(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/extract", strings.NewReader("%PDF-1.7"))
 	req.Header.Set("Content-Type", "application/pdf")
@@ -209,5 +227,136 @@ func TestExtractHandlerServiceUnavailableReturns503RFC9457(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
 		t.Fatalf("expected application/problem+json, got %s", ct)
+	}
+}
+
+func rawPDFRequest() *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/extract", strings.NewReader("%PDF-1.7"))
+	req.Header.Set("Content-Type", "application/pdf")
+	return req
+}
+
+func TestExtractHandlerLogsEachRejection(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		status     int
+		level      string
+		usecaseErr error
+		maxBytes   func(int) int64
+		newReq     func() *http.Request
+	}{
+		{
+			name:   "method not allowed",
+			status: http.StatusMethodNotAllowed,
+			level:  "WARN",
+			newReq: func() *http.Request {
+				return httptest.NewRequest(http.MethodGet, "/extract", nil)
+			},
+		},
+		{
+			name:   "missing file",
+			status: http.StatusBadRequest,
+			level:  "WARN",
+			newReq: func() *http.Request {
+				body := &bytes.Buffer{}
+				w := multipart.NewWriter(body)
+				_ = w.WriteField("foo", "bar")
+				_ = w.Close()
+				req := httptest.NewRequest(http.MethodPost, "/extract", body)
+				req.Header.Set("Content-Type", w.FormDataContentType())
+				return req
+			},
+		},
+		{
+			name:   "unsupported media type",
+			status: http.StatusBadRequest,
+			level:  "WARN",
+			newReq: func() *http.Request {
+				req := httptest.NewRequest(http.MethodPost, "/extract", strings.NewReader("<html/>"))
+				req.Header.Set("Content-Type", "text/html")
+				return req
+			},
+		},
+		{
+			name:     "payload too large",
+			status:   http.StatusRequestEntityTooLarge,
+			level:    "WARN",
+			maxBytes: func(int) int64 { return 4 },
+			newReq: func() *http.Request {
+				req := httptest.NewRequest(http.MethodPost, "/extract", strings.NewReader("%PDF-1.7 big"))
+				req.Header.Set("Content-Type", "application/pdf")
+				return req
+			},
+		},
+		{
+			name:       "malformed pdf",
+			status:     http.StatusBadRequest,
+			level:      "WARN",
+			usecaseErr: domain.ErrInvalidPDF,
+			newReq:     rawPDFRequest,
+		},
+		{
+			name:       "exceeds page limit",
+			status:     http.StatusRequestEntityTooLarge,
+			level:      "WARN",
+			usecaseErr: domain.ErrTooLarge,
+			newReq:     rawPDFRequest,
+		},
+		{
+			name:       "extraction failed",
+			status:     http.StatusInternalServerError,
+			level:      "ERROR",
+			usecaseErr: domain.ErrExtractionFailed,
+			newReq:     rawPDFRequest,
+		},
+		{
+			name:       "extraction unavailable",
+			status:     http.StatusServiceUnavailable,
+			level:      "ERROR",
+			usecaseErr: domain.ErrServiceUnavailable,
+			newReq:     rawPDFRequest,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var output bytes.Buffer
+			logger := logging.NewWithOptions(logging.Options{Level: slog.LevelDebug, Output: &output})
+
+			h := &handler{
+				uc:          &fakeUsecase{err: tc.usecaseErr},
+				maxUploadMB: 50,
+				logger:      logger,
+				maxBytes: func(mb int) int64 {
+					if tc.maxBytes != nil {
+						return tc.maxBytes(mb)
+					}
+					return int64(mb) << 20
+				},
+			}
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, tc.newReq())
+
+			if rec.Code != tc.status {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.status)
+			}
+
+			record := decodeLogLine(t, output.Bytes())
+			if got := record["status"]; got != float64(tc.status) {
+				t.Errorf("log status = %v, want %d", got, tc.status)
+			}
+			if got := record["level"]; got != tc.level {
+				t.Errorf("log level = %v, want %s", got, tc.level)
+			}
+			if strings.Contains(output.String(), "%PDF") {
+				t.Errorf("log leaked request body bytes: %s", output.String())
+			}
+		})
 	}
 }
