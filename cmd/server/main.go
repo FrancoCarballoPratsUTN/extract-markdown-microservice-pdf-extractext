@@ -14,6 +14,7 @@ import (
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/config"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/infrastructure/pdf"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
 	httppres "github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/presentation/http"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/usecase"
 )
@@ -32,6 +33,11 @@ func buildExtractor(cfg *config.Config) (usecase.Extractor, error) {
 func main() {
 	cfg := config.Load()
 
+	logger, err := logging.New()
+	if err != nil {
+		log.Fatalf("invalid logging configuration: %v", err)
+	}
+
 	extractor, err := buildExtractor(cfg)
 	if err != nil {
 		log.Fatalf("extractor unavailable: %v", err)
@@ -43,7 +49,7 @@ func main() {
 	jobs := usecase.NewWorkerPool(uc, cfg.MaxWorkers, cfg.QueueSize, int64(cfg.QueueMaxMB)<<20)
 	defer jobs.Close()
 
-	h := httppres.NewHandler(usecase.NewQueuedExtractor(jobs), cfg.MaxUploadMB)
+	h := httppres.NewHandler(usecase.NewQueuedExtractor(jobs), cfg.MaxUploadMB, logger)
 	mw := httppres.NewAdmissionMiddleware(cfg.MaxWorkers + cfg.QueueSize)
 	handler := mw.Middleware(httppres.WithDeadline(writeTimeout)(h))
 

@@ -138,13 +138,13 @@ orquestador: `Options{Level, Format, Output}`, `New()` (lee `LOG_LEVEL`/
 `Discard`, `ParseLevel`, `ValidateFormat`. Defaults `info`/`json`.
 
 **Acceptance criteria:**
-- [ ] `New()` con `LOG_LEVEL`/`LOG_FORMAT` inválidos devuelve error.
-- [ ] `NewWithOptions` emite JSON por defecto y respeta `Format="text"`.
-- [ ] `Discard()` devuelve un logger que no escribe nada.
+- [x] `New()` con `LOG_LEVEL`/`LOG_FORMAT` inválidos devuelve error.
+- [x] `NewWithOptions` emite JSON por defecto y respeta `Format="text"`.
+- [x] `Discard()` devuelve un logger que no escribe nada.
 
 **Verification:**
-- [ ] `make test-unit` verde (nuevo `internal/logging/logging_test.go`).
-- [ ] `make build` verde.
+- [x] `make test-unit` verde (nuevo `internal/logging/logging_test.go`).
+- [x] `make build` verde.
 
 **Dependencies:** None
 **Files likely touched:** `internal/logging/logging.go`, `internal/logging/logging_test.go`
@@ -156,11 +156,11 @@ orquestador: `Options{Level, Format, Output}`, `New()` (lee `LOG_LEVEL`/
 si no, devuelve el logger original).
 
 **Acceptance criteria:**
-- [ ] `RequestID` devuelve cadena vacía sin valor o con tipo inválido.
-- [ ] `Logger` añade `request_id` solo cuando existe.
+- [x] `RequestID` devuelve cadena vacía sin valor o con tipo inválido.
+- [x] `Logger` añade `request_id` solo cuando existe.
 
 **Verification:**
-- [ ] `make test-unit` verde (nuevo `internal/reqctx/reqctx_test.go`).
+- [x] `make test-unit` verde (nuevo `internal/reqctx/reqctx_test.go`).
 
 **Dependencies:** None
 **Files likely touched:** `internal/reqctx/reqctx.go`, `internal/reqctx/reqctx_test.go`
@@ -210,11 +210,11 @@ completo; actualizar `docker-compose.yml` a `${VAR:-default}` (+`LOG_LEVEL`,
 `reqctx.Logger`. Fallback a `slog.Default()` si `logger == nil`.
 
 **Acceptance criteria:**
-- [ ] 200/201 ⇒ INFO; 400/404/413 ⇒ WARN; 500 ⇒ ERROR.
-- [ ] La línea incluye `status` y `request_id` cuando hay contexto.
+- [x] 200/201 ⇒ INFO; 400/404/413 ⇒ WARN; 500 ⇒ ERROR.
+- [x] La línea incluye `status` y `request_id` cuando hay contexto.
 
 **Verification:**
-- [ ] `make test-unit` verde (nuevo `logging_test.go` con buffer).
+- [x] `make test-unit` verde (nuevo `logging_test.go` con buffer).
 
 **Dependencies:** T10, T11
 **Files likely touched:** `internal/presentation/http/logging.go`, `internal/presentation/http/logging_test.go`
