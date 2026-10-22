@@ -4,14 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/config"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/consul"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/infrastructure/pdf"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
@@ -19,8 +22,141 @@ import (
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/usecase"
 )
 
-func buildExtractor(cfg *config.Config) (usecase.Extractor, error) {
-	extractor := pdf.NewExtractor(cfg.MaxPages)
+func main() {
+	logger, err := logging.New()
+	if err != nil {
+		// El logger no se pudo construir: stderr es lo único que queda.
+		fmt.Fprintf(os.Stderr, "invalid logging configuration: %v\n", err)
+		os.Exit(1)
+	}
+	if err := run(logger); err != nil {
+		logger.Error("application stopped", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run(logger *slog.Logger) error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	logStartup(logger, cfg)
+
+	stopCh := make(chan os.Signal, 1)
+	signal.Notify(stopCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(stopCh)
+
+	extractor, err := buildExtractor(cfg, logger)
+	if err != nil {
+		return err
+	}
+
+	return serve(context.Background(), logger, cfg, extractor, stopCh)
+}
+
+func loadConfig() (config.Config, error) {
+	if !strings.EqualFold(os.Getenv("CONSUL_ENABLED"), "true") {
+		return config.Load()
+	}
+
+	baseURL := strings.TrimSpace(os.Getenv("CONSUL_HTTP_ADDR"))
+	token := strings.TrimSpace(os.Getenv("CONSUL_HTTP_TOKEN"))
+	prefix := strings.TrimSpace(os.Getenv("CONSUL_KV_PREFIX"))
+	if baseURL == "" || token == "" || prefix == "" {
+		return config.Config{}, fmt.Errorf("CONSUL_HTTP_ADDR, CONSUL_HTTP_TOKEN and CONSUL_KV_PREFIX are required when CONSUL_ENABLED=true")
+	}
+
+	values, err := consul.NewKVClient(baseURL, token, nil).LoadPrefix(prefix)
+	if err != nil {
+		return config.Config{}, err
+	}
+	return config.LoadFromValues(values)
+}
+
+// serve levanta el servidor con el extractor ya construido y lo apaga al
+// recibir una señal en stopCh.
+//
+// El extractor llega por parámetro y no se construye aquí: la construcción
+// incluye una prueba de arranque que necesita la librería nativa, y así esta
+// función —la que decide cómo se apaga el servicio— se puede testear sin ella.
+func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, extractor usecase.Extractor, stopCh <-chan os.Signal) error {
+	writeTimeout := time.Duration(cfg.WriteTimeout) * time.Second
+	jobs := usecase.NewWorkerPool(
+		usecase.NewExtractUsecase(extractor),
+		cfg.MaxWorkers,
+		cfg.QueueSize,
+		int64(cfg.QueueMaxMB)<<20,
+		logger,
+	)
+
+	extractHandler := httppres.NewHandler(usecase.NewQueuedExtractor(jobs, logger), cfg.MaxUploadMB, logger)
+	// La admisión limita los trabajos en curso más los que esperan en la cola:
+	// es exactamente el número de trabajos que el pool puede sostener.
+	admission := httppres.NewAdmissionMiddleware(cfg.MaxWorkers + cfg.QueueSize)
+	protected := admission.Middleware(httppres.WithDeadline(writeTimeout)(extractHandler))
+
+	srv := &http.Server{
+		Addr:         ":" + cfg.Port,
+		Handler:      httppres.Routes(protected, logger),
+		ReadTimeout:  time.Duration(cfg.ReadTimeout) * time.Second,
+		WriteTimeout: writeTimeout,
+	}
+
+	// El listener se abre antes de loguear: "server listening" tiene que
+	// significar que el puerto ya está tomado, no que se espera que lo esté.
+	listener, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		return err
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		// La dirección real del listener, no la configurada: con el puerto 0
+		// el sistema elige uno y el log tiene que decir cuál.
+		logger.Info("server listening", "addr", listener.Addr().String())
+		errCh <- srv.Serve(listener)
+	}()
+
+	var serveErr error
+	select {
+	case serveErr = <-errCh:
+	case sig := <-stopCh:
+		logger.Info("shutting down", "signal", sig.String())
+	}
+
+	// Un único presupuesto (SHUTDOWN_TIMEOUT) rige ambos pasos: dejar de aceptar
+	// conexiones y drenar los trabajos en vuelo. Si el primero lo agota, el
+	// segundo no tiene budget y el proceso igual termina: nunca se cuelga más
+	// allá del deadline configurado.
+	shutdownCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.ShutdownTimeout)*time.Second)
+	defer cancel()
+
+	var shutdownErr error
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Warn("http shutdown did not complete", "error", err)
+		shutdownErr = err
+	}
+
+	logger.Info("draining worker pool")
+	if err := jobs.CloseContext(shutdownCtx); err != nil {
+		logger.Warn("worker pool drain did not complete", "error", err)
+		if shutdownErr == nil {
+			shutdownErr = err
+		}
+	} else {
+		logger.Info("worker pool drained")
+	}
+
+	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		return serveErr
+	}
+	return shutdownErr
+}
+
+// buildExtractor wires the pdf_oxide-backed extractor and proves the native
+// library is loadable before the server accepts traffic.
+func buildExtractor(cfg config.Config, logger *slog.Logger) (usecase.Extractor, error) {
+	extractor := pdf.NewExtractor(cfg.MaxPages, logger)
 	// Boot probe: the engine rejecting an invalid payload proves the native
 	// library loaded; any other failure must stop the server before traffic.
 	if _, _, err := extractor.Extract(context.Background(), []byte("startup probe")); err != nil &&
@@ -30,50 +166,19 @@ func buildExtractor(cfg *config.Config) (usecase.Extractor, error) {
 	return extractor, nil
 }
 
-func main() {
-	cfg := config.Load()
-
-	logger, err := logging.New()
-	if err != nil {
-		log.Fatalf("invalid logging configuration: %v", err)
-	}
-
-	extractor, err := buildExtractor(cfg)
-	if err != nil {
-		log.Fatalf("extractor unavailable: %v", err)
-	}
-
-	uc := usecase.NewExtractUsecase(extractor)
-
-	writeTimeout := time.Duration(cfg.WriteTimeout) * time.Second
-	jobs := usecase.NewWorkerPool(uc, cfg.MaxWorkers, cfg.QueueSize, int64(cfg.QueueMaxMB)<<20)
-	defer jobs.Close()
-
-	h := httppres.NewHandler(usecase.NewQueuedExtractor(jobs), cfg.MaxUploadMB, logger)
-	mw := httppres.NewAdmissionMiddleware(cfg.MaxWorkers + cfg.QueueSize)
-	handler := mw.Middleware(httppres.WithDeadline(writeTimeout)(h))
-
-	srv := &http.Server{
-		Addr:         ":" + cfg.Port,
-		Handler:      handler,
-		ReadTimeout:  time.Duration(cfg.ReadTimeout) * time.Second,
-		WriteTimeout: writeTimeout,
-	}
-
-	go func() {
-		log.Printf("starting server on :%s", cfg.Port)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server error: %v", err)
-		}
-	}()
-
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	<-sig
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("shutdown error: %v", err)
-	}
+// logStartup registra la configuración efectiva del servicio al arrancar.
+// No hay secretos en esta configuración, así que se registra completa: los
+// límites son justo lo que hace falta para explicar un 413 o un 503.
+func logStartup(logger *slog.Logger, cfg config.Config) {
+	logger.Info("application starting",
+		"addr", ":"+cfg.Port,
+		"max_upload_mb", cfg.MaxUploadMB,
+		"max_workers", cfg.MaxWorkers,
+		"queue_size", cfg.QueueSize,
+		"queue_max_mb", cfg.QueueMaxMB,
+		"read_timeout", cfg.ReadTimeout,
+		"write_timeout", cfg.WriteTimeout,
+		"shutdown_timeout", cfg.ShutdownTimeout,
+		"max_pages", cfg.MaxPages,
+	)
 }
