@@ -60,22 +60,15 @@ RUN go vet ./... \
     && go test -tags integration -timeout 5m ./internal/infrastructure/pdf/
 
 # ---------------------------------------------------------------------------
-# Runtime: server + libpdf_oxide.so, nothing else.
+# Runtime: distroless/cc (sin shell, sin package manager), con glibc para dlopen.
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim AS runtime
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        libgcc-s1 \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --uid 1000 appuser
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 
 COPY --from=oxide /opt/pdf_oxide/lib/linux_amd64/libpdf_oxide.so /opt/pdf_oxide/libpdf_oxide.so
-COPY --from=builder /out/server /app/
+COPY --from=builder /out/server /app/server
 
 ENV PDF_OXIDE_LIB_PATH=/opt/pdf_oxide/libpdf_oxide.so
 
 WORKDIR /app
-USER appuser
 EXPOSE 8080
-CMD ["/app/server"]
+ENTRYPOINT ["/app/server"]
