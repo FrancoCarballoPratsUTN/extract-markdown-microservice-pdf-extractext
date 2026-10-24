@@ -223,9 +223,9 @@ func serviceRegistration(cfg config.Config) (*consul.KVClient, consul.ServiceReg
 		check = "http://" + address + ":" + cfg.Port + "/healthz"
 	}
 	var tags []string
-	// Las comas son válidas dentro de un tag (por ejemplo, la lista de
-	// middlewares de un router), así que el separador externo es ';'.
-	for _, tag := range strings.Split(os.Getenv("CONSUL_SERVICE_TAGS"), ";") {
+	// Aceptar ';' o ',' como separador. Los tags permiten pasar labels/middlewares
+	// y patrones de routing al registro de Consul.
+	for _, tag := range strings.Split(strings.ReplaceAll(os.Getenv("CONSUL_SERVICE_TAGS"), ",", ";"), ";") {
 		if tag = strings.TrimSpace(tag); tag != "" {
 			tags = append(tags, tag)
 		}
