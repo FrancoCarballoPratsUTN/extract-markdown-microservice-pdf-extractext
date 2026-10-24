@@ -7,13 +7,14 @@ import (
 	"time"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
 )
 
 func TestQueuedExtractorReturnsTheExtractedDocument(t *testing.T) {
-	wp := NewWorkerPool(NewExtractUsecase(&mockExtractor{content: "hola", pageCount: 3}), 2, 4, 1<<20)
+	wp := NewWorkerPool(NewExtractUsecase(&mockExtractor{content: "hola", pageCount: 3}), 2, 4, 1<<20, logging.Discard())
 	t.Cleanup(wp.Close)
 
-	resp, err := NewQueuedExtractor(wp).Extract(context.Background(), []byte("pdf"))
+	resp, err := NewQueuedExtractor(wp, logging.Discard()).Extract(context.Background(), []byte("pdf"))
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -50,12 +51,12 @@ func TestQueuedExtractorReportsAFullQueueAsServiceUnavailable(t *testing.T) {
 	// Buffered so a worker taking a later job cannot block on the send and
 	// deadlock Close; the test only needs the first signal.
 	extractor := &signallingExtractor{gate: gate, started: make(chan struct{}, 4)}
-	wp := NewWorkerPool(extractor, 1, 1, 1<<20)
+	wp := NewWorkerPool(extractor, 1, 1, 1<<20, logging.Discard())
 	t.Cleanup(wp.Close)
 
 	// The blocker occupies the worker; waiting for the signal is what makes the
 	// queue slot free for the filler deterministically.
-	blocker, err := wp.Submit([]byte("bloqueante"))
+	blocker, err := wp.Submit(context.Background(), []byte("bloqueante"))
 	if err != nil {
 		t.Fatalf("submit blocker: %v", err)
 	}
@@ -70,11 +71,23 @@ func TestQueuedExtractorReportsAFullQueueAsServiceUnavailable(t *testing.T) {
 		t.Fatal("worker never picked up the blocking job")
 	}
 
-	if _, err := wp.Submit([]byte("ocupa la cola")); err != nil {
+	if _, err := wp.Submit(context.Background(), []byte("ocupa la cola")); err != nil {
 		t.Fatalf("submit queue filler: %v", err)
 	}
 
-	_, err = NewQueuedExtractor(wp).Extract(context.Background(), []byte("rechazado"))
+	_, err = NewQueuedExtractor(wp, logging.Discard()).Extract(context.Background(), []byte("rechazado"))
+	if !errors.Is(err, domain.ErrServiceUnavailable) {
+		t.Fatalf("err = %v, want ErrServiceUnavailable", err)
+	}
+}
+
+// A pool that is shutting down refuses the work instead of running it: the
+// client has to see a 503 it can retry elsewhere, not a 500.
+func TestQueuedExtractorReportsAClosedPoolAsServiceUnavailable(t *testing.T) {
+	wp := NewWorkerPool(NewExtractUsecase(&mockExtractor{}), 1, 1, 1<<20, logging.Discard())
+	wp.Close()
+
+	_, err := NewQueuedExtractor(wp, logging.Discard()).Extract(context.Background(), []byte("pdf"))
 	if !errors.Is(err, domain.ErrServiceUnavailable) {
 		t.Fatalf("err = %v, want ErrServiceUnavailable", err)
 	}
@@ -84,7 +97,7 @@ func TestQueuedExtractorReportsAFullQueueAsServiceUnavailable(t *testing.T) {
 // the client should retry elsewhere, not receive a 500.
 func TestQueuedExtractorReportsAnExpiredDeadlineAsServiceUnavailable(t *testing.T) {
 	gate := make(chan struct{})
-	wp := NewWorkerPool(&gatedExtractor{gate: gate}, 1, 4, 1<<20)
+	wp := NewWorkerPool(&gatedExtractor{gate: gate}, 1, 4, 1<<20, logging.Discard())
 	t.Cleanup(wp.Close)
 	t.Cleanup(func() { close(gate) })
 
@@ -92,7 +105,7 @@ func TestQueuedExtractorReportsAnExpiredDeadlineAsServiceUnavailable(t *testing.
 	defer cancel()
 
 	start := time.Now()
-	_, err := NewQueuedExtractor(wp).Extract(ctx, []byte("pdf"))
+	_, err := NewQueuedExtractor(wp, logging.Discard()).Extract(ctx, []byte("pdf"))
 	if !errors.Is(err, domain.ErrServiceUnavailable) {
 		t.Fatalf("err = %v, want ErrServiceUnavailable", err)
 	}

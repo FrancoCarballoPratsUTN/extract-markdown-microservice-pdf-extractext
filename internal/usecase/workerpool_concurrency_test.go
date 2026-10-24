@@ -1,21 +1,24 @@
 package usecase
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
 )
 
 // Each caller must receive the result of the job it submitted, never another
 // caller's result.
 func TestConcurrentSubmittersEachReceiveTheirOwnResult(t *testing.T) {
-	wp := NewWorkerPool(&slowExtractor{}, 4, 8, 1<<20)
+	wp := NewWorkerPool(&slowExtractor{}, 4, 8, 1<<20, logging.Discard())
 	defer wp.Close()
 
-	first, err := wp.Submit([]byte("alpha"))
+	first, err := wp.Submit(context.Background(), []byte("alpha"))
 	if err != nil {
 		t.Fatalf("submit alpha: %v", err)
 	}
-	second, err := wp.Submit([]byte("beta"))
+	second, err := wp.Submit(context.Background(), []byte("beta"))
 	if err != nil {
 		t.Fatalf("submit beta: %v", err)
 	}

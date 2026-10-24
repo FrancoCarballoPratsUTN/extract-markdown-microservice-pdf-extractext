@@ -33,10 +33,18 @@ func (uc *extractUsecase) Extract(ctx context.Context, data []byte) (domain.Extr
 
 	content, pageCount, err := uc.extractor.Extract(ctx, data)
 	if err != nil {
-		if errors.Is(err, domain.ErrInvalidPDF) {
+		// Los sentinels de dominio se propagan tal cual: el handler los
+		// traduce a su status (413 al superar el tope de páginas, 400 a un
+		// PDF inválido). Colapsarlos todos en ErrExtractionFailed haría que un
+		// documento con demasiadas páginas se respondiera con un 500.
+		switch {
+		case errors.Is(err, domain.ErrInvalidPDF):
 			return domain.ExtractResponse{}, domain.ErrInvalidPDF
+		case errors.Is(err, domain.ErrTooLarge):
+			return domain.ExtractResponse{}, domain.ErrTooLarge
+		default:
+			return domain.ExtractResponse{}, domain.ErrExtractionFailed
 		}
-		return domain.ExtractResponse{}, domain.ErrExtractionFailed
 	}
 
 	return domain.ExtractResponse{

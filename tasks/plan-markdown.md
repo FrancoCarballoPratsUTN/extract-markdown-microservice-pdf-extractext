@@ -114,6 +114,12 @@ Los comandos finales con env se fijan en T6 (Makefile/AGENTS.md).
 
 # Parte 2 — Observabilidad y operación (logging + apagado seguro + entorno)
 
+> **Decisión humana (vigente).** La observabilidad del servicio es **sólo
+> logging**: no hay métricas, no hay tracing, no hay Prometheus ni Grafana.
+> El `X-Request-ID` se conserva como identificador de correlación entre logs,
+> no como traza distribuida. Ninguna de las decisiones de este documento
+> habilita un endpoint de métricas.
+
 > **Alcance.** Tres frentes que se apoyan en el mismo cableado:
 > 1. **Logging estratégico** con `log/slog` (JSON a stdout), `request_id` por
 >    petición y access log, replicando el estilo del **orquestador**
@@ -192,6 +198,24 @@ y una configuración de entorno única y validada.
     defecto: godotenv **no** se agrega (Compose-only como el orquestador);
     mantener MB enteros validados; apagado completo. Ver §13.
 
+### 9.1 Estado de implementación (2026-10-21)
+
+Lo que quedó implementado de esta Parte 2, y lo que no:
+
+| Decisión | Estado | Nota |
+|---|---|---|
+| `internal/logging` + `internal/reqctx` | implementado | tal como se describe |
+| Middleware HTTP (`withRequestID`, `withRecovery`, `withRequestLog`, `statusRecorder`, `accessLogLevel`) | implementado | en `internal/presentation/http`, con los nombres del orquestador |
+| Logging del pipeline (`WorkerPool.Submit(ctx, data)`, `job.requestID`, `queued_extractor`, `extractor`) | implementado | `request_id` correlaciona la línea de acceso con las del pipeline |
+| `config` fail-fast (`Load() (Config, error)`) | implementado, con una diferencia | **no** se inyecta `getenv`; los tests usan `t.Setenv`. La inyección se decidió innecesaria: `os.Getenv` + `t.Setenv` ya aísla los tests |
+| `SHUTDOWN_TIMEOUT` + `CloseContext` + `run`/`serve` | implementado | el drenado está acotado por `SHUTDOWN_TIMEOUT`. `serve` recibe el extractor ya construido, así que el apagado se testea sin la librería nativa |
+| Segundo `SIGTERM` ⇒ `os.Exit(1)` | **no implementado** | el apagado ya está acotado por `SHUTDOWN_TIMEOUT` y Docker aplica `SIGKILL` tras `stop_grace_period`; un `os.Exit` desde una goroutine no es testeable |
+| Higiene del log (sin tokens, cuerpos ni PDF en stdout) | implementado | `internal/logging/sanitize.go`: `Truncate` (valor y stack acotados en longitud) y `MaxValueLength`/`MaxStackLength`. No hay `SafeURL`: este servicio no hace HTTP saliente, así que no hay URL que sanear |
+
+El `SHUTDOWN_TIMEOUT` es un entero en segundos (no una duración), a diferencia
+del orquestador, que usa `35s`. `deploy/compose.yaml` ya pasaba `35` al
+extract; no se unifican los formatos.
+
 ## 10. Grafo de dependencias
 
 ```
@@ -251,7 +275,8 @@ Detalle de cada tarea en `tasks/todo-markdown.md` (Parte 2).
 ### Checkpoint D (tras T20–T21)
 - [x] `SIGTERM` ⇒ `"shutting down"` + `"worker pool drained"` + salida 0.
 - [x] `SHUTDOWN_TIMEOUT` agotado ⇒ salida ≠ 0 y log de error.
-- [x] Segundo `SIGTERM` fuerza salida.
+- [ ] Segundo `SIGTERM` fuerza salida — no implementado (ver §9.1): el apagado
+      ya está acotado y Docker aplica `SIGKILL` tras `stop_grace_period`.
 
 ### Fase 4 — Docs y verificación
 - T22: README (sección Logging + tabla de env), `AGENTS.md`, nota en

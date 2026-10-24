@@ -139,3 +139,25 @@ func TestReadPDFPayloadRejectsMalformedMultipartBoundary(t *testing.T) {
 		t.Errorf("expected ErrMissingFile, got %v", err)
 	}
 }
+
+// failingReader breaks the transport halfway through the body.
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) {
+	return 0, errors.New("connection reset by peer")
+}
+
+// A body that cannot be read to the end is a transport failure, not a request
+// without a file: the two deserve different answers.
+func TestReadPDFPayloadReportsAnUnreadableBody(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/extract", failingReader{})
+	req.Header.Set("Content-Type", "application/pdf")
+
+	_, err := readPDFPayload(req, 1<<20)
+	if !errors.Is(err, ErrUnreadableBody) {
+		t.Errorf("expected ErrUnreadableBody, got %v", err)
+	}
+	if errors.Is(err, ErrMissingFile) {
+		t.Errorf("err = %v, want an unreadable body not to look like a missing file", err)
+	}
+}

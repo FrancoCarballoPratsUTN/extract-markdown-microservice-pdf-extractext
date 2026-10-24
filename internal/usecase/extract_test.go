@@ -52,3 +52,17 @@ func TestExtractFailureWrapped(t *testing.T) {
 		t.Errorf("expected ErrExtractionFailed, got %v", err)
 	}
 }
+
+// The page limit is a property of the document, not a failure of the
+// extraction: collapsing it into ErrExtractionFailed would turn a 413 into a
+// 500.
+func TestExtractPropagatesThePageLimit(t *testing.T) {
+	uc := NewExtractUsecase(&mockExtractor{err: domain.ErrTooLarge})
+	_, err := uc.Extract(context.Background(), []byte("pdf"))
+	if !errors.Is(err, domain.ErrTooLarge) {
+		t.Errorf("expected ErrTooLarge, got %v", err)
+	}
+	if errors.Is(err, domain.ErrExtractionFailed) {
+		t.Errorf("err = %v, want the page limit not to be reported as a failure", err)
+	}
+}

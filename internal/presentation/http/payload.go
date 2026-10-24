@@ -14,6 +14,10 @@ var (
 	ErrMissingFile          = errors.New("missing pdf file")
 	ErrPayloadTooLarge      = errors.New("payload too large")
 	ErrUnsupportedMediaType = errors.New("unsupported media type")
+	// ErrUnreadableBody means the body could not be read to the end. It is
+	// distinct from ErrMissingFile: a truncated upload is a transport
+	// problem, not a request without a file.
+	ErrUnreadableBody = errors.New("could not read request body")
 )
 
 // readPDFPayload extracts the PDF bytes from the request, accepting either a
@@ -65,7 +69,7 @@ func readMultipartPDF(r *http.Request, maxBytes int64) ([]byte, error) {
 func readLimited(r io.Reader, maxBytes int64) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(r, maxBytes+1))
 	if err != nil {
-		return nil, ErrMissingFile
+		return nil, ErrUnreadableBody
 	}
 	if int64(len(data)) > maxBytes {
 		return nil, ErrPayloadTooLarge

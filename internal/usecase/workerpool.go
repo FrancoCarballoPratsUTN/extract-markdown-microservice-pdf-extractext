@@ -3,8 +3,10 @@ package usecase
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
 )
@@ -12,6 +14,10 @@ import (
 // ErrQueueFull reports that the bounded queue had no room for the job. Callers
 // should surface it as 503 so the client can retry with backoff.
 var ErrQueueFull = errors.New("queue full")
+
+// ErrClosed reports that the pool no longer accepts work because it is
+// shutting down.
+var ErrClosed = errors.New("worker pool closed")
 
 type JobResult struct {
 	Resp domain.ExtractResponse
@@ -23,7 +29,6 @@ type JobResult struct {
 // documents.
 type job struct {
 	data   []byte
-	size   int64
 	result chan JobResult
 }
 
@@ -35,6 +40,7 @@ type WorkerPool struct {
 	extractor ExtractUsecase
 	jobs      chan job
 	wg        sync.WaitGroup
+	logger    *slog.Logger
 
 	// budget is the admission byte cap shared by running and queued jobs: both
 	// hold the whole PDF in memory until extraction returns.
@@ -71,7 +77,7 @@ func (b *byteBudget) release(size int64) {
 	b.used -= size
 }
 
-func NewWorkerPool(extractor ExtractUsecase, workers, queueSize int, maxQueuedBytes int64) *WorkerPool {
+func NewWorkerPool(extractor ExtractUsecase, workers, queueSize int, maxQueuedBytes int64, logger *slog.Logger) *WorkerPool {
 	if workers <= 0 {
 		workers = 1
 	}
@@ -85,10 +91,14 @@ func NewWorkerPool(extractor ExtractUsecase, workers, queueSize int, maxQueuedBy
 	if maxQueuedBytes <= 0 {
 		maxQueuedBytes = math.MaxInt64
 	}
+	if logger == nil {
+		logger = slog.Default()
+	}
 	wp := &WorkerPool{
 		extractor: extractor,
 		jobs:      make(chan job, queueSize),
 		budget:    &byteBudget{limit: maxQueuedBytes},
+		logger:    logger,
 	}
 	for i := 0; i < workers; i++ {
 		wp.wg.Add(1)
@@ -100,38 +110,69 @@ func NewWorkerPool(extractor ExtractUsecase, workers, queueSize int, maxQueuedBy
 func (wp *WorkerPool) work() {
 	defer wp.wg.Done()
 	for j := range wp.jobs {
-		resp, err := wp.extractor.Extract(context.Background(), j.data)
-		// The PDF is unreachable from here on, so give its budget back before
-		// handing off the result: that lets the next burst in immediately.
-		wp.budget.release(int64(len(j.data)))
-		j.result <- JobResult{Resp: resp, Err: err}
+		j.result <- wp.run(j)
 	}
+}
+
+// run extracts one job and reports the outcome.
+//
+// The extraction runs on its own context because the native conversion cannot
+// be cancelled mid-call: a client that walks away must not abort the work
+// already in flight.
+func (wp *WorkerPool) run(j job) JobResult {
+	start := time.Now()
+	resp, err := wp.extractor.Extract(context.Background(), j.data)
+	duration := time.Since(start).Milliseconds()
+
+	// The PDF is unreachable from here on, so give its budget back before
+	// handing off the result: that lets the next burst in immediately.
+	wp.budget.release(int64(len(j.data)))
+
+	if err != nil {
+		wp.logger.Error("extraction failed", "duration_ms", duration, "error", err)
+		return JobResult{Err: err}
+	}
+	wp.logger.Info("extraction completed", "pages", resp.PageCount, "duration_ms", duration)
+	return JobResult{Resp: resp}
 }
 
 // Submit enqueues data and returns the channel that carries its result. The
 // channel is buffered so a worker never blocks handing off, even if the caller
 // gave up waiting.
-func (wp *WorkerPool) Submit(data []byte) (chan JobResult, error) {
-	wp.mu.Lock()
-	defer wp.mu.Unlock()
-
-	if wp.closed {
-		return nil, errors.New("closed")
-	}
-
+//
+// The job runs on its own context so a disconnected client does not cancel
+// work in flight.
+func (wp *WorkerPool) Submit(ctx context.Context, data []byte) (chan JobResult, error) {
 	size := int64(len(data))
+
+	wp.mu.Lock()
+	if wp.closed {
+		wp.mu.Unlock()
+		return nil, ErrClosed
+	}
 	if !wp.budget.tryAcquire(size) {
+		wp.mu.Unlock()
+		wp.logRejection(ctx, size)
 		return nil, ErrQueueFull
 	}
 
-	j := job{data: data, size: size, result: make(chan JobResult, 1)}
+	j := job{data: data, result: make(chan JobResult, 1)}
 	select {
 	case wp.jobs <- j:
+		wp.mu.Unlock()
 		return j.result, nil
 	default:
 		wp.budget.release(size)
+		wp.mu.Unlock()
+		wp.logRejection(ctx, size)
 		return nil, ErrQueueFull
 	}
+}
+
+// logRejection reports that a job could not be admitted. Both reasons mean the
+// same thing to the caller: this replica is saturated.
+func (wp *WorkerPool) logRejection(ctx context.Context, size int64) {
+	wp.logger.Warn("queue full; rejecting job", "bytes", size)
 }
 
 // Wait blocks for a submitted job's result, or returns the context error if the
@@ -148,11 +189,35 @@ func (wp *WorkerPool) Wait(ctx context.Context, ch chan JobResult) (domain.Extra
 
 // Close stops accepting work and waits for the jobs already queued to finish.
 func (wp *WorkerPool) Close() {
+	_ = wp.CloseContext(context.Background())
+}
+
+// CloseContext stops accepting work and waits for the queued jobs to finish,
+// giving up when the context expires. A bounded drain keeps a stuck native call
+// from blocking the shutdown forever.
+//
+// When the context expires the worker goroutine keeps running until the native
+// call returns: the job still holds its PDF in memory. That is deliberate —
+// the alternative is killing the process mid-conversion — and harmless here
+// because the caller is shutting the process down anyway.
+func (wp *WorkerPool) CloseContext(ctx context.Context) error {
 	wp.mu.Lock()
 	if !wp.closed {
 		wp.closed = true
 		close(wp.jobs)
 	}
 	wp.mu.Unlock()
-	wp.wg.Wait()
+
+	drained := make(chan struct{})
+	go func() {
+		wp.wg.Wait()
+		close(drained)
+	}()
+
+	select {
+	case <-drained:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

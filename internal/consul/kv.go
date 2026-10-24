@@ -1,14 +1,20 @@
 package consul
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"time"
 )
+
+const requestTimeout = 5 * time.Second
 
 type KVClient struct {
 	baseURL string
@@ -23,13 +29,36 @@ type kvEntry struct {
 
 func NewKVClient(baseURL, token string, client *http.Client) *KVClient {
 	if client == nil {
-		client = http.DefaultClient
+		// Sin deadline, un Consul colgado puede bloquear el arranque o el
+		// apagado indefinidamente. El presupuesto es por request.
+		client = &http.Client{Timeout: requestTimeout}
 	}
+
 	return &KVClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   strings.TrimSpace(token),
 		client:  client,
 	}
+}
+
+func NewKVClientWithCA(baseURL, token, caFile string) (*KVClient, error) {
+	if caFile == "" {
+		return NewKVClient(baseURL, token, nil), nil
+	}
+	pemData, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("read Consul CA file: %w", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(pemData) {
+		return nil, fmt.Errorf("parse Consul CA file")
+	}
+	return NewKVClient(baseURL, token, &http.Client{
+		Timeout: requestTimeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
+		},
+	}), nil
 }
 
 func (c *KVClient) LoadPrefix(prefix string) (map[string]string, error) {

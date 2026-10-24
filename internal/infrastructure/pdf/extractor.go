@@ -3,10 +3,14 @@ package pdf
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
+	"runtime/debug"
 	"strings"
 	"unicode"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
 	pdfoxide "github.com/yfedoseev/pdf_oxide/go"
 )
 
@@ -23,29 +27,47 @@ type document interface {
 // declares rather than on this package.
 type extractor struct {
 	maxPages int
+	logger   *slog.Logger
 	open     func([]byte) (document, error)
 }
 
 // NewExtractor returns the pdf_oxide-backed adapter. A maxPages of 0 disables
 // the per-document page limit.
-func NewExtractor(maxPages int) *extractor {
+func NewExtractor(maxPages int, logger *slog.Logger) *extractor {
 	return &extractor{
 		maxPages: maxPages,
+		logger:   logger,
 		open: func(data []byte) (document, error) {
 			return pdfoxide.OpenFromBytes(data)
 		},
 	}
 }
 
+// log returns the extractor logger.
+//
+// It never returns nil: the panic handler below depends on it, y un logger
+// nulo convertiría un panic recuperado en un segundo panic, que es justo lo
+// que el recovery existe para evitar.
+func (e *extractor) log(ctx context.Context) *slog.Logger {
+	if e.logger == nil {
+		return slog.Default()
+	}
+	return e.logger
+}
+
 // Extract converts a PDF payload into Markdown via the engine's own
 // ToMarkdownAll. ctx is part of the port only: the native conversion cannot be
 // cancelled mid-call and the worker pool runs it with context.Background(), so
 // admission control and request deadlines upstream bound how long callers wait.
-func (e *extractor) Extract(_ context.Context, data []byte) (content string, pages int, err error) {
+func (e *extractor) Extract(ctx context.Context, data []byte) (content string, pages int, err error) {
 	defer func() {
-		if r := recover(); r != nil {
+		if recovered := recover(); recovered != nil {
 			content, pages = "", 0
 			err = domain.ErrExtractionFailed
+			e.log(ctx).Error("panic recovered while extracting",
+				"panic", logging.Truncate(fmt.Sprint(recovered), logging.MaxValueLength),
+				"stack", logging.Truncate(string(debug.Stack()), logging.MaxStackLength),
+			)
 		}
 	}()
 

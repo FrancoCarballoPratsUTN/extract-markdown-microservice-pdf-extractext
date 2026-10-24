@@ -36,6 +36,10 @@ services:
       - QUEUE_MAX_MB=256
       - READ_TIMEOUT=30
       - WRITE_TIMEOUT=30
+      - SHUTDOWN_TIMEOUT=${SHUTDOWN_TIMEOUT:-35}
+    # Por encima del SHUTDOWN_TIMEOUT: primero el servicio drena los trabajos
+    # en vuelo y sólo después Docker lo mata.
+    stop_grace_period: ${STOP_GRACE_PERIOD:-45s}
     labels:
       - "traefik.enable=true"
       - 'traefik.http.routers.extract.rule=HostRegexp(`extract\.universidad\.localhost|localhost|127\.0\.0\.1`)'

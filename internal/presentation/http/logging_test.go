@@ -5,31 +5,12 @@ package http
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
-	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/reqctx"
 )
-
-// decodeLogLine decodes a single JSON log record from the buffer. It fails the
-// test if the buffer is empty or not a valid single JSON object.
-func decodeLogLine(t *testing.T, raw []byte) map[string]any {
-	t.Helper()
-
-	line := strings.TrimSpace(string(raw))
-	if line == "" {
-		t.Fatal("expected a log record, got none")
-	}
-	var record map[string]any
-	if err := json.Unmarshal([]byte(line), &record); err != nil {
-		t.Fatalf("log record is not valid JSON: %v (%q)", err, line)
-	}
-	return record
-}
 
 func TestLogDecisionLevelFollowsStatus(t *testing.T) {
 	t.Parallel()
@@ -66,21 +47,6 @@ func TestLogDecisionLevelFollowsStatus(t *testing.T) {
 				t.Errorf("status = %v, want %d", got, tc.status)
 			}
 		})
-	}
-}
-
-func TestLogDecisionIncludesRequestIDWhenPresent(t *testing.T) {
-	t.Parallel()
-
-	var output bytes.Buffer
-	logger := logging.NewWithOptions(logging.Options{Level: slog.LevelDebug, Output: &output})
-	ctx := reqctx.WithRequestID(context.Background(), "req-abc")
-
-	logDecision(ctx, logger, "decision", http.StatusBadRequest)
-
-	record := decodeLogLine(t, output.Bytes())
-	if got := record["request_id"]; got != "req-abc" {
-		t.Errorf("request_id = %v, want %q", got, "req-abc")
 	}
 }
 

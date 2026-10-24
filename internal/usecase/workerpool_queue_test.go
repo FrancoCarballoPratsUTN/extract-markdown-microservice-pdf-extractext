@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
 )
 
 // gatedExtractor blocks every extraction until gate closes, which lets a test
@@ -34,7 +35,7 @@ func newGatedPool(t *testing.T, workers, queueSize int, maxQueuedBytes int64) (*
 	var once sync.Once
 	open := func() { once.Do(func() { close(gate) }) }
 
-	wp := NewWorkerPool(&gatedExtractor{gate: gate}, workers, queueSize, maxQueuedBytes)
+	wp := NewWorkerPool(&gatedExtractor{gate: gate}, workers, queueSize, maxQueuedBytes, logging.Discard())
 	t.Cleanup(wp.Close)
 	t.Cleanup(open)
 	return wp, open
@@ -56,7 +57,7 @@ func TestWorkerPoolAbsorbsBurstBeyondWorkerCount(t *testing.T) {
 
 	channels := make([]chan JobResult, 0, 4)
 	for i := range 4 {
-		ch, err := wp.Submit([]byte("hola"))
+		ch, err := wp.Submit(context.Background(), []byte("hola"))
 		if err != nil {
 			t.Fatalf("submit %d rejected with %v, want the queue to absorb it", i, err)
 		}
@@ -74,14 +75,14 @@ func TestWorkerPoolAbsorbsBurstBeyondWorkerCount(t *testing.T) {
 func TestWorkerPoolRejectsWhenByteBudgetExhausted(t *testing.T) {
 	wp, _ := newGatedPool(t, 1, 8, 16) // room for exactly two 8-byte payloads
 
-	if _, err := wp.Submit(make([]byte, 8)); err != nil {
+	if _, err := wp.Submit(context.Background(), make([]byte, 8)); err != nil {
 		t.Fatalf("first submit: %v", err)
 	}
-	if _, err := wp.Submit(make([]byte, 8)); err != nil {
+	if _, err := wp.Submit(context.Background(), make([]byte, 8)); err != nil {
 		t.Fatalf("second submit: %v", err)
 	}
 
-	_, err := wp.Submit(make([]byte, 8))
+	_, err := wp.Submit(context.Background(), make([]byte, 8))
 	if !errors.Is(err, ErrQueueFull) {
 		t.Fatalf("err = %v, want ErrQueueFull once the byte budget is spent", err)
 	}
@@ -92,14 +93,14 @@ func TestWorkerPoolRejectsWhenByteBudgetExhausted(t *testing.T) {
 func TestWorkerPoolReleasesBytesAfterExtraction(t *testing.T) {
 	wp, open := newGatedPool(t, 1, 8, 16)
 
-	ch, err := wp.Submit(make([]byte, 8))
+	ch, err := wp.Submit(context.Background(), make([]byte, 8))
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
 	open()
 	drain(t, ch)
 
-	if _, err := wp.Submit(make([]byte, 8)); err != nil {
+	if _, err := wp.Submit(context.Background(), make([]byte, 8)); err != nil {
 		t.Fatalf("submit after completion: %v, want the freed budget to be reusable", err)
 	}
 }
@@ -109,7 +110,7 @@ func TestWorkerPoolReleasesBytesAfterExtraction(t *testing.T) {
 func TestWorkerPoolExtractTimesOutInsteadOfHanging(t *testing.T) {
 	wp, _ := newGatedPool(t, 1, 8, 1<<20)
 
-	ch, err := wp.Submit([]byte("hola"))
+	ch, err := wp.Submit(context.Background(), []byte("hola"))
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}

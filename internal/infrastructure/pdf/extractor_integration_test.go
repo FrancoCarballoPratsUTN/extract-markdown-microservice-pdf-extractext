@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
 )
 
 const (
@@ -48,7 +49,7 @@ func extractCtx(t *testing.T) context.Context {
 func TestExtractorReturnsMarkdownFromRealPDF(t *testing.T) {
 	requireNativeLib(t)
 
-	content, pageCount, err := NewExtractor(2000).Extract(extractCtx(t), readFixture(t, scrumGuidePDF))
+	content, pageCount, err := NewExtractor(2000, logging.Discard()).Extract(extractCtx(t), readFixture(t, scrumGuidePDF))
 
 	if err != nil {
 		t.Fatalf("Extract() error = %v, want nil", err)
@@ -89,7 +90,7 @@ func TestExtractorRejectsCorruptPDF(t *testing.T) {
 
 	garbage := []byte("garbage payload that is not a pdf at all")
 
-	_, _, err := NewExtractor(2000).Extract(extractCtx(t), garbage)
+	_, _, err := NewExtractor(2000, logging.Discard()).Extract(extractCtx(t), garbage)
 
 	if !errors.Is(err, domain.ErrInvalidPDF) {
 		t.Fatalf("Extract() error = %v, want ErrInvalidPDF", err)

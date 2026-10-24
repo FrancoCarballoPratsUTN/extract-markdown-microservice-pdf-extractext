@@ -25,14 +25,11 @@ func (f *fakeUsecase) Extract(ctx context.Context, data []byte) (domain.ExtractR
 	return f.resp, f.err
 }
 
-func newTestHandler(uc ExtractUsecase) *handler {
-	return &handler{
-		uc: uc,
-		maxBytes: func(mb int) int64 {
-			return int64(mb) << 20
-		},
-		maxUploadMB: 50,
-		logger:      logging.Discard(),
+func newTestHandler(uc ExtractUsecase) *Handler {
+	return &Handler{
+		uc:       uc,
+		maxBytes: 50 << 20,
+		logger:   logging.Discard(),
 	}
 }
 
@@ -130,11 +127,10 @@ func TestExtractHandlerPayloadTooLargeReturns413RFC9457(t *testing.T) {
 	req.Header.Set("Content-Type", "application/pdf")
 
 	rec := httptest.NewRecorder()
-	h := &handler{
-		uc:          &fakeUsecase{},
-		maxBytes:    func(mb int) int64 { return 4 },
-		maxUploadMB: 1,
-		logger:      logging.Discard(),
+	h := &Handler{
+		uc:       &fakeUsecase{},
+		maxBytes: 4,
+		logger:   logging.Discard(),
 	}
 	h.ServeHTTP(rec, req)
 
@@ -200,17 +196,50 @@ func TestExtractHandlerExtractionFailedReturns500RFC9457(t *testing.T) {
 	}
 }
 
-func TestExtractHandlerReturnsHealthz(t *testing.T) {
+func TestRoutesServesHealthz(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
-	h := newTestHandler(&fakeUsecase{})
-	h.ServeHTTP(rec, req)
+	Routes(newTestHandler(&fakeUsecase{}), logging.Discard()).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	if body := rec.Body.String(); body != "ok" {
 		t.Fatalf("expected ok, got %q", body)
+	}
+}
+
+func TestRoutesReturnsProblemForAnUnknownPath(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/does-not-exist", nil)
+	rec := httptest.NewRecorder()
+	Routes(newTestHandler(&fakeUsecase{}), logging.Discard()).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("expected application/problem+json, got %s", ct)
+	}
+}
+
+// A body that breaks halfway is a bad request, not a missing file: the client
+// has to know that it has to resend the document.
+func TestExtractHandlerUnreadableBodyReturns400RFC9457(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/extract", failingReader{})
+	req.Header.Set("Content-Type", "application/pdf")
+
+	rec := httptest.NewRecorder()
+	h := newTestHandler(&fakeUsecase{})
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("expected application/problem+json, got %s", ct)
+	}
+	if !strings.Contains(rec.Body.String(), `"status":400`) {
+		t.Fatalf("expected problem details, got %s", rec.Body.String())
 	}
 }
 
@@ -244,7 +273,7 @@ func TestExtractHandlerLogsEachRejection(t *testing.T) {
 		status     int
 		level      string
 		usecaseErr error
-		maxBytes   func(int) int64
+		maxBytes   int64
 		newReq     func() *http.Request
 	}{
 		{
@@ -283,7 +312,7 @@ func TestExtractHandlerLogsEachRejection(t *testing.T) {
 			name:     "payload too large",
 			status:   http.StatusRequestEntityTooLarge,
 			level:    "WARN",
-			maxBytes: func(int) int64 { return 4 },
+			maxBytes: 4,
 			newReq: func() *http.Request {
 				req := httptest.NewRequest(http.MethodPost, "/extract", strings.NewReader("%PDF-1.7 big"))
 				req.Header.Set("Content-Type", "application/pdf")
@@ -328,16 +357,13 @@ func TestExtractHandlerLogsEachRejection(t *testing.T) {
 			var output bytes.Buffer
 			logger := logging.NewWithOptions(logging.Options{Level: slog.LevelDebug, Output: &output})
 
-			h := &handler{
-				uc:          &fakeUsecase{err: tc.usecaseErr},
-				maxUploadMB: 50,
-				logger:      logger,
-				maxBytes: func(mb int) int64 {
-					if tc.maxBytes != nil {
-						return tc.maxBytes(mb)
-					}
-					return int64(mb) << 20
-				},
+			h := &Handler{
+				uc:       &fakeUsecase{err: tc.usecaseErr},
+				logger:   logger,
+				maxBytes: 50 << 20,
+			}
+			if tc.maxBytes > 0 {
+				h.maxBytes = tc.maxBytes
 			}
 
 			rec := httptest.NewRecorder()

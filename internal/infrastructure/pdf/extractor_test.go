@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
 	pdfoxide "github.com/yfedoseev/pdf_oxide/go"
 )
 
@@ -31,6 +32,7 @@ func (f *fakeDocument) Close() error {
 func TestExtractRejectsEmptyPayloadWithoutOpeningDocument(t *testing.T) {
 	opened := false
 	extractor := &extractor{
+		logger:   logging.Discard(),
 		maxPages: 10,
 		open: func([]byte) (document, error) {
 			opened = true
@@ -53,15 +55,16 @@ func TestExtractRejectsEmptyPayloadWithoutOpeningDocument(t *testing.T) {
 
 func TestExtractMapsOpenSentinelsToInvalidPDF(t *testing.T) {
 	sentinels := map[string]error{
-		"invalid format":    pdfoxide.ErrInvalidFormat,
-		"parse error":       pdfoxide.ErrParseError,
+		"invalid format":     pdfoxide.ErrInvalidFormat,
+		"parse error":        pdfoxide.ErrParseError,
 		"document not found": pdfoxide.ErrDocumentNotFound,
-		"invalid path":      pdfoxide.ErrInvalidPath,
+		"invalid path":       pdfoxide.ErrInvalidPath,
 	}
 
 	for name, sentinel := range sentinels {
 		t.Run(name, func(t *testing.T) {
 			extractor := &extractor{
+				logger:   logging.Discard(),
 				maxPages: 10,
 				open: func([]byte) (document, error) {
 					return nil, fmt.Errorf("open failed: %w", sentinel)
@@ -79,6 +82,7 @@ func TestExtractMapsOpenSentinelsToInvalidPDF(t *testing.T) {
 
 func TestExtractMapsUnexpectedOpenFailureToExtractionFailed(t *testing.T) {
 	extractor := &extractor{
+		logger:   logging.Discard(),
 		maxPages: 10,
 		open: func([]byte) (document, error) {
 			return nil, errors.New("socket: connection reset")
@@ -94,6 +98,7 @@ func TestExtractMapsUnexpectedOpenFailureToExtractionFailed(t *testing.T) {
 
 func TestExtractFailsWhenPageCountFails(t *testing.T) {
 	extractor := &extractor{
+		logger:   logging.Discard(),
 		maxPages: 10,
 		open: func([]byte) (document, error) {
 			return &fakeDocument{pageErr: errors.New("broken catalog")}, nil
@@ -109,6 +114,7 @@ func TestExtractFailsWhenPageCountFails(t *testing.T) {
 
 func TestExtractRejectsDocumentExceedingPageLimit(t *testing.T) {
 	extractor := &extractor{
+		logger:   logging.Discard(),
 		maxPages: 10,
 		open: func([]byte) (document, error) {
 			return &fakeDocument{pageCount: 11}, nil
@@ -127,6 +133,7 @@ func TestExtractRejectsDocumentExceedingPageLimit(t *testing.T) {
 
 func TestExtractTreatsZeroPageLimitAsUnlimited(t *testing.T) {
 	extractor := &extractor{
+		logger:   logging.Discard(),
 		maxPages: 0,
 		open: func([]byte) (document, error) {
 			return &fakeDocument{pageCount: 99999, markdown: "# ok"}, nil
@@ -145,6 +152,7 @@ func TestExtractTreatsZeroPageLimitAsUnlimited(t *testing.T) {
 
 func TestExtractFailsWhenMarkdownConversionFails(t *testing.T) {
 	extractor := &extractor{
+		logger:   logging.Discard(),
 		maxPages: 10,
 		open: func([]byte) (document, error) {
 			return &fakeDocument{pageCount: 3, markdownErr: errors.New("reading order failed")}, nil
@@ -160,6 +168,7 @@ func TestExtractFailsWhenMarkdownConversionFails(t *testing.T) {
 
 func TestExtractRecoversFromPanicDuringConversion(t *testing.T) {
 	extractor := &extractor{
+		logger:   logging.Discard(),
 		maxPages: 10,
 		open: func([]byte) (document, error) {
 			panic("native library exploded")
@@ -179,6 +188,7 @@ func TestExtractRecoversFromPanicDuringConversion(t *testing.T) {
 func TestExtractReturnsMarkdownAndPageCountAndClosesDocument(t *testing.T) {
 	doc := &fakeDocument{pageCount: 16, markdown: "# Guía de Scrum\n\nContenido."}
 	extractor := &extractor{
+		logger:   logging.Discard(),
 		maxPages: 2000,
 		open: func([]byte) (document, error) {
 			return doc, nil
@@ -222,6 +232,7 @@ func TestSanitizeNormalizesLineEndingsControlsAndTrailingWhitespace(t *testing.T
 
 func TestExtractSanitizesMarkdownFromDocument(t *testing.T) {
 	extractor := &extractor{
+		logger:   logging.Discard(),
 		maxPages: 10,
 		open: func([]byte) (document, error) {
 			return &fakeDocument{pageCount: 2, markdown: "# Título\r\nhola\u0000 mundo\r"}, nil

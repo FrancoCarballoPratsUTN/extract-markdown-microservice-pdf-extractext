@@ -107,23 +107,28 @@ La admisión máxima por réplica es `MAX_WORKERS + QUEUE_SIZE`.
 
 ## Logging
 
-El servicio emite logs estructurados a `stdout`. Cada petición lleva un
-`request_id`: se reutiliza el `X-Request-ID` entrante o se genera uno con
-`crypto/rand`, y se devuelve en el mismo header para poder correlacionar la
-respuesta con los logs.
+El servicio emite logs estructurados a `stdout`. La observabilidad es
+**sólo logging**: no hay métricas, tracing ni endpoint de telemetría.
 
 - **Access log** (`"http request"`): una línea por petición con `method`, `path`,
-  `status`, `bytes`, `remote_addr`, `request_id` y `duration_ms`. El nivel sigue
-  al status: 5xx ⇒ `ERROR`, 4xx ⇒ `WARN`, el resto ⇒ `INFO`.
-- **Pipeline**: la cola emite `"worker pool started"` al arrancar,
-  `"extraction completed"` (`pages`, `duration_ms`, `request_id`) o
-  `"extraction failed"`, y `"queue full; rejecting job"` cuando se satura.
+  `status` y `duration_ms`. El nivel sigue
+  al status: 5xx ⇒ `ERROR`, 4xx ⇒ `WARN`, el resto ⇒ `INFO`. Las sondas
+  `/healthz` no se registran.
+- **Pipeline**: la cola emite `"extraction completed"` (`pages`, `duration_ms`)
+  o `"extraction failed"`, `"queue full; rejecting job"` cuando
+  se satura y `"extraction abandoned before completion"` cuando el cliente
+  abandona la espera.
 - **Arranque/apagado**: `"application starting"` con la configuración efectiva,
-  `"server listening"`, `"shutting down"`, `"worker pool drained"`. Un error de
-  apagado (`"application stopped"`) sale con código ≠ 0.
+  `"server listening"`, `"shutting down"`, `"draining worker pool"`,
+  `"worker pool drained"`. Un error de apagado (`"application stopped"`) sale
+  con código ≠ 0.
 - Un `panic` en el extractor o en un handler se recupera, se registra con
-  `stack` y se responde `500`.
-- Los logs **nunca** incluyen el cuerpo del PDF ni rutas de fichero.
+  `stack` y se responde `500`. La petición que lo provocó queda además en el
+  access log, con su `500`.
+- Los logs **nunca** incluyen el cuerpo del PDF ni rutas de fichero. Los
+  valores que vienen de fuera se acotan en longitud antes de escribirse: el
+  `path` y el `method` de la petición, el valor
+  de un `panic` (256 caracteres) y su `stack` (4096).
 
 En local se puede forzar el detalle: `LOG_LEVEL=debug LOG_FORMAT=text make run`.
 
