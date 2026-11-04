@@ -39,6 +39,7 @@ func readPDFPayload(r *http.Request, maxBytes int64) ([]byte, error) {
 }
 
 func readMultipartPDF(r *http.Request, maxBytes int64) ([]byte, error) {
+	r.Body = http.MaxBytesReader(nil, r.Body, maxBytes)
 	reader, err := r.MultipartReader()
 	if err != nil {
 		return nil, ErrMissingFile
@@ -50,6 +51,9 @@ func readMultipartPDF(r *http.Request, maxBytes int64) ([]byte, error) {
 			return nil, ErrMissingFile
 		}
 		if err != nil {
+			if isPayloadTooLarge(err) {
+				return nil, ErrPayloadTooLarge
+			}
 			return nil, ErrMissingFile
 		}
 
@@ -60,8 +64,22 @@ func readMultipartPDF(r *http.Request, maxBytes int64) ([]byte, error) {
 
 		data, err := readLimited(part, maxBytes)
 		_ = part.Close()
-		return data, err
+		if err != nil {
+			return nil, err
+		}
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			if isPayloadTooLarge(err) {
+				return nil, ErrPayloadTooLarge
+			}
+			return nil, ErrUnreadableBody
+		}
+		return data, nil
 	}
+}
+
+func isPayloadTooLarge(err error) bool {
+	var maxBytesError *http.MaxBytesError
+	return errors.As(err, &maxBytesError)
 }
 
 // readLimited reads at most maxBytes, reporting ErrPayloadTooLarge when the

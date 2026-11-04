@@ -1,15 +1,7 @@
 # syntax=docker/dockerfile:1
 
-# pdf_oxide version pinned to match go.mod. Bumping it requires re-verifying the
-# integration tests and the installer output path below.
 ARG PDF_OXIDE_VERSION=v0.3.78
 
-# ---------------------------------------------------------------------------
-# pdf_oxide native library.
-#
-# Kept as its own stage so the runtime and the test target get only the shared
-# library they dlopen via PDF_OXIDE_LIB_PATH (purego, CGO_ENABLED=0).
-# ---------------------------------------------------------------------------
 FROM golang:1.26-bookworm AS oxide
 
 ARG PDF_OXIDE_VERSION
@@ -19,18 +11,8 @@ RUN go run github.com/yfedoseev/pdf_oxide/go/cmd/install@${PDF_OXIDE_VERSION} \
         -dir /opt/pdf_oxide \
     && test -f /opt/pdf_oxide/lib/linux_amd64/libpdf_oxide.so
 
-# Flat, immutable path so every stage and the runtime share one env value.
-# ---------------------------------------------------------------------------
-# Build the server.
-#
-# CGO_ENABLED=0: the engine is loaded at run time with purego, so the Go binary
-# is fully static and needs no C toolchain in the build image.
-# ---------------------------------------------------------------------------
-FROM golang:1.26-bookworm AS builder
+FROM golang:1.26.10-bookworm AS builder
 
-# CGO_ENABLED must be a build-time constant, not just a flag on one RUN: the
-# test stage inherits it and with cgo enabled pdfoxide compiles its cgo binding
-# (which needs a C toolchain and the static library this image does not have).
 ENV CGO_ENABLED=0
 
 WORKDIR /src
@@ -42,12 +24,6 @@ COPY . .
 
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
 
-# ---------------------------------------------------------------------------
-# Test target. Carries the real pdf_oxide library so the integration tests
-# exercise the same code path the runtime image does.
-#
-#   docker build --target test .
-# ---------------------------------------------------------------------------
 FROM builder AS test
 
 COPY --from=oxide /opt/pdf_oxide/lib/linux_amd64/libpdf_oxide.so /opt/pdf_oxide/libpdf_oxide.so
@@ -59,16 +35,15 @@ RUN go vet ./... \
     && go test -tags unit ./... \
     && go test -tags integration -timeout 5m ./internal/infrastructure/pdf/
 
-# ---------------------------------------------------------------------------
-# Runtime: distroless/cc (sin shell, sin package manager), con glibc para dlopen.
-# ---------------------------------------------------------------------------
-FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
+FROM gcr.io/distroless/base-debian13@sha256:9039a88709bcc2bacf5a2faac331d65dd6840f763f225ad9594cc0c67bcd0fba AS runtime
 
 COPY --from=oxide /opt/pdf_oxide/lib/linux_amd64/libpdf_oxide.so /opt/pdf_oxide/libpdf_oxide.so
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libgcc_s.so.1 /usr/lib/x86_64-linux-gnu/libgcc_s.so.1
 COPY --from=builder /out/server /app/server
 
 ENV PDF_OXIDE_LIB_PATH=/opt/pdf_oxide/libpdf_oxide.so
 
 WORKDIR /app
 EXPOSE 8080
+USER 65532:65532
 ENTRYPOINT ["/app/server"]

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"syscall"
@@ -160,8 +161,7 @@ func TestServeGivesUpWhenThePoolDoesNotDrain(t *testing.T) {
 	}
 }
 
-// The server has to answer the health probe: it is what the orchestrator and
-// the container healthcheck use to decide whether the replica is alive.
+// The server has to answer the health probe used by the orchestrator and Consul.
 func TestServeAnswersTheHealthProbe(t *testing.T) {
 	logger := logging.NewWithOptions(logging.Options{Level: slog.LevelDebug, Output: &bytes.Buffer{}})
 
@@ -180,6 +180,7 @@ func TestServeAnswersTheHealthProbe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the health probe failed: %v", err)
 	}
+
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want %d", response.StatusCode, http.StatusOK)
@@ -193,5 +194,25 @@ func TestServeAnswersTheHealthProbe(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("serve() did not return")
+	}
+}
+
+func TestServiceRegistrationPreservesCommasInsideTags(t *testing.T) {
+	t.Setenv("CONSUL_ENABLED", "true")
+	t.Setenv("CONSUL_HTTP_ADDR", "http://consul:8500")
+	t.Setenv("CONSUL_HTTP_TOKEN", "token")
+	t.Setenv("CONSUL_SERVICE_TAGS", "security-headers@file,extract-cb@file; metrics ;")
+
+	_, registration, err := serviceRegistration(config.Config{Port: "8080"})
+	if err != nil {
+		t.Fatalf("serviceRegistration() unexpected error: %v", err)
+	}
+
+	want := []string{
+		"security-headers@file,extract-cb@file",
+		"metrics",
+	}
+	if !reflect.DeepEqual(registration.Tags, want) {
+		t.Fatalf("tags = %#v, want %#v", registration.Tags, want)
 	}
 }

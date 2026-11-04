@@ -10,6 +10,7 @@ import (
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/reqctx"
 )
 
 // AdmissionMiddleware limita cuántas extracciones corren a la vez. Cuando el
@@ -58,6 +59,14 @@ func WithDeadline(timeout time.Duration) func(http.Handler) http.Handler {
 // llega.
 const maxMethodLength = 16
 
+func withRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, requestID := reqctx.EnsureRequestID(r.Context(), r.Header.Get("X-Request-ID"))
+		w.Header().Set("X-Request-ID", requestID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 // withRecovery convierte un panic en un 500 en vez de tumbar el proceso. El
 // stack se registra porque un panic es un fallo real que hay que depurar, pero
 // acotado para que una línea no crezca sin límite.
@@ -78,6 +87,7 @@ func withRecovery(logger *slog.Logger) func(http.Handler) http.Handler {
 					"method", r.Method,
 					"path", logging.Truncate(r.URL.Path, logging.MaxValueLength),
 					"stack", logging.Truncate(string(debug.Stack()), logging.MaxStackLength),
+					"request_id", reqctx.RequestID(r.Context()),
 				)
 				// Si la respuesta ya empezó, no se puede reescribir: un segundo
 				// documento JSON dejaría al cliente con un cuerpo corrupto. En
@@ -119,17 +129,16 @@ func withRequestLog(logger *slog.Logger) func(http.Handler) http.Handler {
 				"path", logging.Truncate(r.URL.Path, logging.MaxValueLength),
 				"status", status,
 				"duration_ms", time.Since(start).Milliseconds(),
+				"request_id", reqctx.RequestID(r.Context()),
 			)
 		})
 	}
 }
 
-// statusRecorder envuelve el ResponseWriter para capturar el status y la
-// cantidad de bytes escritos, que el access log necesita.
+// statusRecorder envuelve el ResponseWriter para capturar el status del access log.
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
-	bytes  int
 }
 
 func (r *statusRecorder) WriteHeader(status int) {
@@ -143,9 +152,7 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	if r.status == 0 {
 		r.status = http.StatusOK
 	}
-	n, err := r.ResponseWriter.Write(b)
-	r.bytes += n
-	return n, err
+	return r.ResponseWriter.Write(b)
 }
 
 // Flush reenvía al writer subyacente si lo soporta, para no romper streaming.

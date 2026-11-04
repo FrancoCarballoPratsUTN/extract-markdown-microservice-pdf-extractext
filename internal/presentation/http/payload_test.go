@@ -17,6 +17,7 @@ func TestReadPDFPayloadFromMultipartFileField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to build multipart body: %v", err)
 	}
+
 	if _, err := part.Write([]byte("%PDF-1.7 fake")); err != nil {
 		t.Fatalf("failed to write part: %v", err)
 	}
@@ -33,6 +34,32 @@ func TestReadPDFPayloadFromMultipartFileField(t *testing.T) {
 	}
 	if string(data) != "%PDF-1.7 fake" {
 		t.Errorf("unexpected payload: %q", data)
+	}
+}
+
+func TestReadPDFPayloadRejectsMultipartBodyExceedingMaxBytes(t *testing.T) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("metadata", strings.Repeat("x", 32)); err != nil {
+		t.Fatalf("failed to write metadata: %v", err)
+	}
+	part, err := writer.CreateFormFile("file", "doc.pdf")
+	if err != nil {
+		t.Fatalf("failed to build multipart body: %v", err)
+	}
+	if _, err := part.Write([]byte("%PDF-1.7")); err != nil {
+		t.Fatalf("failed to write PDF part: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("failed to close multipart body: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/extract", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	_, err = readPDFPayload(req, 32)
+	if !errors.Is(err, ErrPayloadTooLarge) {
+		t.Fatalf("expected ErrPayloadTooLarge, got %v", err)
 	}
 }
 
