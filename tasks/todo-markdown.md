@@ -455,3 +455,183 @@ en `srv.Shutdown`. Un segundo `SIGTERM`/`SIGINT` fuerza `os.Exit(1)`. Loguear
 - [x] Todos los AC cumplidos.
 - [x] `make test` + `make test-unit` + `make build` + `docker build --target test .` verdes.
 - [ ] Revisión con humano antes de cerrar.
+
+---
+
+## Fase 5 — Disposición de CVE de BusyBox
+
+### T24: Verificar el paquete BusyBox de la imagen Alpine
+
+- [ ] Registrar la versión de BusyBox y el resultado del scanner para la imagen
+  runtime construida.
+- [ ] Actualizar BusyBox sólo si hay una versión compatible corregida disponible;
+  conservar Alpine `3.24.3`.
+- [ ] README distingue el `wget` del healthcheck fijo de una corrección de la CVE.
+
+**Verificación:** construir la imagen runtime y comparar el resultado del scanner
+con la versión del paquete. No hace falta agregar un test de aplicación: no cambia
+el comportamiento HTTP.
+**Dependencias:** ninguna. **Scope:** S.
+
+## Fase 6 — Correcciones del Code Review para producción
+
+### [x] T25 — Limitar el cuerpo multipart completo (TDD)
+**Descripción:** Reproducir y corregir el bypass por partes multipart no objetivo,
+manteniendo el límite específico del fichero PDF y el contrato HTTP existente.
+
+**Acceptance criteria:**
+- [x] Una request multipart cuyo cuerpo total supera el límite devuelve 413.
+- [x] Las partes no objetivo no pueden leerse sin límite.
+- [x] Los casos existentes de PDF válido, vacío y fichero demasiado grande siguen funcionando.
+
+**Verification:**
+- [x] RED: el test de reproducción falla con la implementación actual.
+- [x] GREEN: `go test ./internal/presentation/http -run 'TestReadPDFPayload|TestExtractHandler'`.
+- [x] `make test` y `make build` pasan después del slice.
+
+**Dependencies:** T23
+**Files likely touched:** `internal/presentation/http/payload.go`, `internal/presentation/http/handler.go`, `internal/presentation/http/payload_test.go`, `internal/presentation/http/handler_test.go`
+**Estimated scope:** M
+
+### [x] T26 — Proteger el parsing de tags de Consul (TDD)
+**Descripción:** Añadir una regresión que preserve comas internas y documente el
+contrato actual de separación mediante punto y coma.
+
+**Acceptance criteria:**
+- [x] Las comas permanecen dentro del mismo tag.
+- [x] Los puntos y coma separan tags y se eliminan espacios exteriores.
+- [x] No se envían tags vacíos.
+
+**Verification:**
+- [x] RED: el test de contrato falla si se vuelve a separar por comas.
+- [x] GREEN: `go test ./cmd/server -run TestServiceRegistration`.
+- [x] `make test` pasa después del slice.
+
+**Dependencies:** T25
+**Files likely touched:** `cmd/server/main_test.go`
+**Estimated scope:** S
+
+### Checkpoint E — Contrato de entrada y Consul
+- [x] Tests focalizados y `make test` verdes.
+- [x] `make build` verde.
+
+### [x] T27 — Ejecutar el runtime Docker como no-root
+**Descripción:** Mantener la imagen runtime actual, pero declarar explícitamente
+un UID/GID sin privilegios para el proceso del servidor.
+
+**Acceptance criteria:**
+- [x] El Dockerfile declara `USER` no-root antes del entrypoint.
+- [x] El servidor conserva acceso de lectura a la librería y al binario.
+- [x] `docker build --target test .` continúa pasando.
+
+**Verification:**
+- [x] `docker build --target test .`.
+- [x] Inspección estática confirma `USER` no-root en la etapa runtime.
+
+**Dependencies:** Checkpoint E
+**Files likely touched:** `Dockerfile`
+**Estimated scope:** XS
+
+### [x] T28 — Eliminar estado muerto del recorder HTTP
+**Descripción:** Quitar el contador de bytes no utilizado sin alterar el status
+capturado ni las líneas de access log.
+
+**Acceptance criteria:**
+- [x] `statusRecorder` sólo conserva el estado necesario para el status HTTP.
+- [x] Los tests de access log y recovery siguen pasando.
+- [x] No se agregan abstracciones ni cambios de contrato.
+
+**Verification:**
+- [x] `go test ./internal/presentation/http`.
+- [x] `make test`.
+
+**Dependencies:** T27
+**Files likely touched:** `internal/presentation/http/middleware.go`
+**Estimated scope:** XS
+
+### Checkpoint Final — Hardening de producción
+- [x] `make test` verde.
+- [x] `make build` verde.
+- [x] `docker build --target test .` verde.
+- [x] `git diff --check` limpio.
+
+## Fase 7 — Correlación de `X-Request-ID`
+
+### [x] T29 — Crear contexto y validación del request ID (TDD)
+**Descripción:** Implementar `internal/reqctx` para validar, generar, guardar y
+leer identificadores de request sin depender del transporte HTTP.
+
+**Acceptance criteria:**
+- [x] Un ID válido se conserva exactamente.
+- [x] Valores ausentes, vacíos o inválidos generan un ID nuevo.
+- [x] El valor usado en logs tiene una longitud máxima definida.
+
+**Verification:**
+- [x] RED/GREEN: `go test ./internal/reqctx`.
+- [x] `make test` y `make build`.
+
+**Dependencies:** T28
+**Files likely touched:** `internal/reqctx/reqctx.go`, `internal/reqctx/reqctx_test.go`
+**Estimated scope:** S
+
+### [x] T30 — Añadir middleware HTTP de request ID (TDD)
+**Descripción:** Leer `X-Request-ID`, generar uno cuando sea necesario,
+guardarlo en el contexto y devolverlo en la respuesta.
+
+**Acceptance criteria:**
+- [x] Request con ID válido devuelve el mismo header.
+- [x] Request sin ID devuelve un ID generado.
+- [x] Request con ID inválido no lo propaga ni lo registra.
+
+**Verification:**
+- [x] RED/GREEN: tests de middleware y rutas focalizados.
+- [x] `go test ./internal/presentation/http`.
+
+**Dependencies:** T29
+**Files likely touched:** `internal/presentation/http/middleware.go`, `internal/presentation/http/routes.go`, `internal/presentation/http/middleware_test.go`
+**Estimated scope:** M
+
+### Checkpoint G — Propagación HTTP
+- [ ] Tests focalizados verdes.
+- [ ] `make test` verde.
+- [ ] `make build` verde.
+
+### [x] T31 — Propagar request ID al pipeline (TDD)
+**Descripción:** Copiar el ID al job del worker pool y añadir `request_id` a
+access logs, recovery, rechazos, errores y finalización de extracción.
+
+**Acceptance criteria:**
+- [x] Todos los logs de una request comparten el mismo `request_id`.
+- [x] Los jobs conservan el ID aunque el worker use `context.Background()`.
+- [x] Requests internas sin contexto no provocan panic ni logs inválidos.
+
+**Verification:**
+- [x] RED/GREEN: tests de handler, worker pool y logging.
+- [x] `go test ./internal/presentation/http ./internal/usecase`.
+
+**Dependencies:** T30
+**Files likely touched:** `internal/presentation/http/logging.go`, `internal/presentation/http/handler.go`, `internal/usecase/workerpool.go`, `internal/usecase/queued_extractor.go`, tests asociados
+**Estimated scope:** L
+
+### [x] T32 — Verificar correlación end-to-end
+**Descripción:** Validar una request completa con un ID enviado por el
+orquestador y documentar el contrato operativo.
+
+**Acceptance criteria:**
+- [x] `X-Request-ID: orchestrator-123` aparece en response, access log y pipeline.
+- [x] Un ID ausente se genera y se propaga de forma consistente.
+- [x] No se filtran cuerpos PDF, tokens ni valores fuera de límite.
+
+**Verification:**
+- [x] `make test`.
+- [x] `make build`.
+- [x] Smoke HTTP con `curl` y revisión de logs estructurados.
+
+**Dependencies:** T31
+**Files likely touched:** `README.md`, `tasks/plan-markdown.md`, tests de integración o helpers existentes
+**Estimated scope:** S
+
+### Checkpoint Final — Correlación operativa
+- [x] Todos los criterios de T29–T32 cumplidos.
+- [x] Suite completa y build verdes.
+- [x] Contrato de `X-Request-ID` documentado.

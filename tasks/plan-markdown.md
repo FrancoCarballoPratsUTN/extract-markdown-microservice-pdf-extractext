@@ -321,3 +321,830 @@ Detalle de cada tarea en `tasks/todo-markdown.md` (Parte 2).
 | Docker gate | `docker build --target test .` |
 | Smoke | `LOG_LEVEL=debug ./bin/server` + `curl` (PDF válido / no-PDF / > `MAX_UPLOAD_MB`) |
 | Precedencia | `PORT=9090 docker compose ...` vs `.env` (`PORT=8080`) ⇒ gana 9090 |
+
+## 15. Cierre simple de runtime y CVE
+
+El runtime usa `gcr.io/distroless/cc-debian12:nonroot`, sin shell, gestor de
+paquetes ni `wget`. Se eliminó el `HEALTHCHECK` interno basado en BusyBox; las
+sondas externas, Traefik y Consul continúan consultando `/healthz`.
+
+La configuración de negocio y límites permanece en `internal/config`. Las
+variables de Consul que sólo usa el composition root pueden leerse ahí en
+`cmd/server`; no se agrega otra capa de configuración hasta que más paquetes
+necesiten esos valores. `LOG_LEVEL` y `LOG_FORMAT` siguen en
+`internal/logging`.
+
+# Parte 3 — Correcciones del Code Review para producción
+
+## Objetivo
+
+Resolver los bloqueantes identificados en la revisión del working tree sin
+alterar el contrato funcional del extractor:
+
+1. limitar el tamaño total de una petición multipart, no sólo el fichero PDF;
+2. proteger con tests el contrato de tags de Consul, donde las comas pueden
+   formar parte de un valor;
+3. evitar que el runtime Docker ejecute el servidor como root;
+4. eliminar estado muerto del recorder HTTP.
+
+## Orden incremental y dependencias
+
+1. **T25 — Límite multipart (TDD):** test de reproducción, implementación y
+   mapeo explícito de `http.MaxBytesError`.
+2. **T26 — Tags de Consul (TDD):** test de regresión para comas internas y
+   separador `;`.
+3. **Checkpoint E:** `make test` y `make build` verdes.
+4. **T27 — Runtime no-root:** declarar usuario no privilegiado en la imagen y
+   verificar el gate Docker.
+5. **T28 — Limpieza de recorder:** eliminar `bytes` sin cambiar el contrato de
+   logging.
+6. **Checkpoint Final de hardening:** tests, build, diff y Docker gate verdes.
+
+## Criterios de aceptación
+
+- Ninguna petición multipart puede superar el límite total configurado aunque
+  contenga partes que no sean `file`.
+- Un tag como `security-headers@file,extract-cb@file` se conserva como un único
+  valor y `;` separa tags distintos.
+- El proceso del contenedor runtime no se ejecuta como root.
+- `statusRecorder` no conserva datos que no utiliza.
+- Cada cambio de comportamiento tiene un test de regresión y las validaciones
+  existentes continúan pasando.
+
+## Riesgos y límites
+
+- El overhead multipart forma parte del límite total; el handler debe reservar
+  el límite configurado para la request completa y conservar el límite propio
+  del PDF.
+- No se cambia la imagen base ni se añade tooling adicional en esta fase.
+- No se modifica la documentación histórica de `tasks/plan.md`/`tasks/todo.md`.
+
+## Estado de ejecución
+
+- T25 completado: el cuerpo multipart completo queda limitado y se drena para
+  detectar exceso aunque el PDF aparezca antes que otras partes.
+- T26 completado: las comas internas se preservan y `;` separa tags.
+- T27 completado: el runtime declara `USER 65532:65532`.
+- T28 completado: se eliminó el contador de bytes no utilizado del recorder.
+- Verificado: `make test`, `make build`, `docker build --target test .`,
+  construcción de runtime e inspección de usuario efectivo, y `git diff --check`.
+
+# Parte 4 — Correlación de `X-Request-ID`
+
+## Objetivo
+
+Implementar correlación de requests de extremo a extremo para que el servicio
+respete el `X-Request-ID` enviado por el orquestador, genere uno seguro cuando
+falte, lo devuelva al cliente y lo incluya en los logs HTTP y del pipeline de
+extracción. La implementación debe preservar los límites actuales de logging y
+no tratar el identificador como una credencial.
+
+## Decisiones de diseño
+
+- Se usará el header `X-Request-ID` existente como contrato de entrada y salida.
+- Un header ausente o inválido recibirá un UUID generado por el servicio.
+- El valor será validado y acotado antes de entrar al contexto o a los logs.
+- El middleware de request ID se ejecutará antes de recovery y access logging.
+- El worker pool copiará el ID al `job`, porque el extractor se ejecuta con
+  `context.Background()` y no puede recuperar el contexto HTTP original.
+- No se crearán métricas, tracing ni una dependencia externa nueva.
+
+## Orden incremental y dependencias
+
+1. **T29 — Contexto y validación del request ID (TDD):** crear el paquete
+   `internal/reqctx` con generación, validación, lectura/escritura del ID y
+   tests unitarios.
+2. **T30 — Middleware HTTP (TDD):** consumir o generar `X-Request-ID`, añadirlo
+   al contexto y ecoarlo en la respuesta; cubrir éxito, ausencia e input
+   inválido.
+3. **Checkpoint G:** tests focalizados, `make test` y `make build` verdes.
+4. **T31 — Propagación al pipeline (TDD):** copiar el ID al job y añadirlo a
+   access logs, recovery, decisiones del handler y logs del worker pool.
+5. **T32 — Verificación de integración:** probar una request completa y asegurar
+   que todas las líneas relacionadas comparten el mismo identificador.
+
+## Criterios de aceptación
+
+- Un `X-Request-ID` válido enviado por el orquestador aparece sin cambios en la
+  respuesta y en todos los logs relacionados.
+- Si falta o no cumple la validación, el servicio genera un ID nuevo y no
+  registra el valor inválido sin acotarlo.
+- Los logs de access, recovery, rechazo, cola y extracción contienen
+  `request_id` cuando existe una request HTTP.
+- Health checks conservan su comportamiento actual y no generan access logs.
+- Los tests existentes permanecen verdes y no se registran cuerpos PDF, tokens
+  ni valores ilimitados.
+
+## Riesgos y mitigaciones
+
+| Riesgo | Impacto | Mitigación |
+|---|---|---|
+| ID malicioso o excesivamente largo | Medio | Validación estricta y límite de longitud antes de loguear |
+| Pérdida del ID al entrar al worker pool | Alto | Copia explícita en `job` y tests de resultado de logs |
+| Cambio accidental del orden de middleware | Medio | Test de respuesta y access log con el mismo ID |
+| Contrato histórico desactualizado | Bajo | Verificar código real y actualizar documentación sólo después de implementar |
+
+## Verificación prevista
+
+- `go test ./internal/reqctx`
+- `go test ./internal/presentation/http`
+- `go test ./internal/usecase`
+
+## Estado de ejecución
+
+Parte 4 completada. T29–T32 están implementadas y verificadas con `make test`,
+`make build`, `git diff --check` y un smoke test HTTP que confirmó el eco de
+`X-Request-ID: orchestrator-123` en la respuesta y su presencia en el access
+log.
+
+## Parte 5 — Runtime Distroless
+
+Se reemplazó `debian:bookworm-slim` por
+Se evaluó Alpine `3.24.3` (digest
+`sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9`),
+pero fue descartada: aunque compila, el runtime falla al cargar `pdf_oxide`
+porque la biblioteca requiere símbolos `glibc` hasta `GLIBC_2.35` y `gcompat`
+no ofrece compatibilidad suficiente. Se conserva
+`gcr.io/distroless/base-debian13:nonroot`, fijada al digest
+`sha256:9039a88709bcc2bacf5a2faac331d65dd6840f763f225ad9594cc0c67bcd0fba`,
+con sólo `libgcc_s.so.1` añadido, sin `wget` ni `HEALTHCHECK` interno.
+
+La decisión queda cerrada: no se aplica Alpine al runtime mientras
+`pdf_oxide` se distribuya como biblioteca glibc. Mezclar una glibc externa
+sobre Alpine introduciría una base no soportada y una cadena de suministro
+menos confiable que la imagen Distroless funcional.
+
+Verificación final:
+
+- `docker build --target test .` ✅
+- `docker build --target runtime .` ✅
+- Smoke `/healthz` en contenedor Distroless ✅
+- Extracción real de PDF con `X-Request-ID` y `pdf_oxide` ✅
+- Usuario efectivo `65532:65532` y sin `HEALTHCHECK` interno ✅
+- `git diff --check` ✅
+- `make test`
+- `make build`
+- Smoke HTTP con `curl -H 'X-Request-ID: orchestrator-123'` y revisión de logs.
+
+---
+
+# Parte 6 — Plan de correcciones del Code Review (RC-1)
+
+## 1. Objetivo y alcance
+
+Cerrar los hallazgos del informe de Code Review del working tree sin ampliar el
+alcance funcional ni añadir dependencias. El plan cubre **3 bloqueantes**, **5
+hallazgos no bloqueantes** y **1 sugerencia de hardening aceptada**, y deja
+explícitamente fuera lo que no aporta al RC (ver §10).
+
+| ID | Hallazgo | Severidad | Tarea |
+|---|---|---|---|
+| H1 | Límite multipart: PDF == `MAX_UPLOAD_MB` falla solo en multipart | Bloqueante | T33 |
+| H2 | `CONSUL_SERVICE_TAGS` cambia de contrato sin documentar | Bloqueante | T34 |
+| H3 | `request_id` se pierde en el panic del extractor; esquema inconsistente | Bloqueante | T36–T38 |
+| H4 | `reqctx` sin doc comments, semántica silenciosa, constante muerta | No bloqueante | T35 |
+| H5 | Dockerfile: pin inconsistente, rationale eliminado, README no coincide | No bloqueante | T39 |
+| H6 | Ramas nuevas sin test (header inválido, rechazo, abandono, drain) | No bloqueante | T33/T37/T38 |
+| H7 | Documentación del RC contradictoria | No bloqueante | T40 |
+| H8 | `readMultipartPDF` con dos responsabilidades | No bloqueante | T33 |
+| S1 | Hardening del contenedor en compose (sugerencia del review §4) | No bloqueante | T41 |
+
+**Regla de oro:** cada cambio de comportamiento nace de un test que falla
+(RED), se implementa con el mínimo código que lo hace pasar (GREEN) y se
+refactoriza sin cambiar el contrato (REFACTOR). Ningún test existente se
+"adapta" para tapar una regresión: si un test cambia de supuesto, el plan lo
+justifica por escrito.
+
+## 2. Definition of Done del RC
+
+Ninguna tarea se marca `[x]` si no se cumplen **todas** estas puertas:
+
+- [ ] `make test` verde (`CGO_ENABLED=0 go vet ./... && go test ./...`).
+- [ ] `make test-unit` verde (`go test -tags unit ./...`).
+- [ ] `make build` verde.
+- [ ] `docker build --target test .` verde.
+- [ ] `docker build --target runtime .` verde + smoke `/healthz` + extracción real.
+- [ ] `docker compose config` válido y el servicio endurecido corre con
+  `read_only`, `cap_drop: ALL` y `no-new-privileges` (T41).
+- [ ] `gofmt -l .` sin salida y `git diff --check` limpio.
+- [ ] `git diff go.mod go.sum` vacío: **cero dependencias nuevas**.
+- [ ] Cada comportamiento nuevo tiene un test que falla sin el cambio (evidencia RED en la descripción del PR).
+- [ ] Las ramas nuevas quedan cubiertas: `go tool cover -func` sin líneas nuevas sin ejecutar.
+- [ ] Toda función exportada nueva tiene doc comment (convención del repo).
+- [ ] Los docs describen una sola verdad (imagen, límites, tags, `X-Request-ID`).
+
+## 3. Decisiones de diseño
+
+- **D1 — Dos límites explícitos, no uno reutilizado.** El cuerpo multipart y la
+  parte PDF son cosas distintas: `maxBodyBytes = maxBytes + multipartOverheadAllowance`
+  y `maxPartBytes = maxBytes`. El allowance cubre boundaries y cabeceras de
+  parte; es una **constante interna**, no configuración (YAGNI).
+- **D2 — `;` es el único separador de tags.** No se puede hacer *fail-fast* ante
+  comas porque un tag con comas y sin `;` es un caso **válido** (lista de
+  middlewares de Traefik). La mitigación es documentación + nota de release.
+- **D3 — Un único punto escribe `request_id`.** `logging.WithRequestID(ctx, logger)`
+  es la única función que añade el campo. Elimina las 4 variantes actuales y
+  fija el esquema: **el campo se omite cuando no hay ID**, nunca `""`.
+- **D4 — `reqctx` sigue siendo un paquete hoja.** No importa otros paquetes
+  `internal/*`; `internal/logging` sí puede importarlo (sin ciclo). No se
+  renombra en este RC: el coste de churn no aporta valor (YAGNI).
+- **D5 — Se mantiene `base-debian13` en este RC.** Es la imagen ya verificada con
+  smoke real; migrar a `cc-debian13:nonroot` invalidaría esa verificación y
+  exige re-smoke. Queda como backlog (§10), documentando el motivo de la copia
+  manual de `libgcc_s.so.1`.
+- **D6 — El ID generado pasa a `crypto/rand.Text()`.** Sustituye el UUIDv4
+  artesanal (12 líneas con `encoding/hex` y manipulación de bits) por una línea
+  de la stdlib. `rand.Text()` devuelve **26 caracteres** del alfabeto base32
+  RFC 4648 (`A-Z`, `2-7`) con **al menos 128 bits** de aleatoriedad: colisiones
+  despreciables y sin necesidad de coordinación entre réplicas, así que dos
+  peticiones simultáneas no pueden compartir ID. Se acepta el único coste real:
+  deja de ser un UUID con formato reconocible, por lo que el README **debe**
+  dejar de prometer "UUID" y el tooling que auto-detecta UUIDs ya no lo verá
+  (ver §8). El contrato de validación (`IsValid`: ASCII imprimible ≤ 128) no
+  cambia, así que un ID de orquestador externo sigue siendo válido.
+- **D7 — Hardening del contenedor en `docker-compose.yml` entra en este RC.**
+  El servicio no escribe en disco ni necesita privilegios, así que se añaden
+  `read_only: true`, `security_opt: ["no-new-privileges:true"]` y
+  `cap_drop: ["ALL"]`. `tmpfs: /tmp` **solo** si el smoke demuestra que
+  `libpdf_oxide` (vía `purego`/`dlopen`) necesita escribir en `/tmp`; se añade
+  como consecuencia de una prueba, no por precaución (YAGNI). El resto de
+  servicios del compose no se toca.
+
+## 4. Grafo de dependencias y secuencia
+
+```
+T33 (payload)  ─┐
+T34 (tags)     ─┼─► Checkpoint H
+T35 (reqctx)   ─┴─► T36 (helper) ─► T37 (extractor) ─► T38 (tests) ─► Checkpoint I/J
+T39 (docker)   ───────────────────────────────────────────────────► Checkpoint K
+T41 (compose)  ───────────────────────────────────────────────────► Checkpoint K
+T40 (docs)     ◄── depende del estado final de T33…T41 ───────────► Checkpoint Final
+```
+
+| Orden | Tarea | Depende de | Scope | Riesgo |
+|---|---|---|---|---|
+| 1 | T33 Límites multipart | — | S/M | Medio |
+| 2 | T34 Tags de Consul | — | S | Bajo |
+| 3 | T35 `reqctx` endurecido | — | S | Bajo |
+| 4 | T36 Helper `logging.WithRequestID` | T35 | M | Bajo |
+| 5 | T37 Panic del extractor | T36 | S | Bajo |
+| 6 | T38 Tests residuales de correlación | T36, T37 | S | Bajo |
+| 7 | T39 Dockerfile + README | — | S | Bajo |
+| 8 | T41 Hardening del contenedor en compose | T39 | S | Medio |
+| 9 | T40 Coherencia documental | T33…T41 | S | Bajo |
+
+## 5. Tareas
+
+### [ ] T33 — Límites de payload explícitos (parte vs cuerpo)
+
+**Descripción:** hoy `readMultipartPDF` aplica el mismo `maxBytes` al cuerpo
+completo y a la parte PDF, así que un PDF de exactamente `MAX_UPLOAD_MB` pasa
+como `application/pdf` y falla como `multipart/form-data`. Se separan los dos
+topes y se aprovecha para dividir la función en dos responsabilidades (H8).
+
+**Acceptance criteria:**
+- [ ] RED: `TestReadPDFPayloadAcceptsMultipartPDFExactlyAtTheLimit` falla con el
+  código actual (hoy devuelve `ErrPayloadTooLarge`).
+- [ ] `readPDFPayload` pasa `maxPartBytes = maxBytes` y
+  `maxBodyBytes = maxBytes + multipartOverheadAllowance`.
+- [ ] `readMultipartPDF(r, maxPartBytes, maxBodyBytes)` documenta qué acota cada
+  parámetro y por qué `http.MaxBytesReader(nil, …)` es seguro (comentario).
+- [ ] `TestReadPDFPayloadRejectsMultipartPDFAboveTheLimit` (PDF = `maxBytes+1`)
+  devuelve `ErrPayloadTooLarge` por el límite **de parte**.
+- [ ] `TestReadPDFPayloadRejectsMultipartBodyAboveTheLimit` (campo no-`file` de
+  `multipartOverheadAllowance+1` con `maxBytes` pequeño) devuelve
+  `ErrPayloadTooLarge` por el límite **de cuerpo**.
+- [ ] Se **reescribe** `TestReadPDFPayloadRejectsMultipartBodyExceedingMaxBytes`:
+  su supuesto (un cuerpo de ~200 B con `maxBytes=32` excede el tope) deja de ser
+  cierto al añadir el allowance. El nuevo test debe atacar el tope de cuerpo,
+  no el de parte.
+- [ ] `TestReadPDFPayloadReportsATruncatedMultipartBody` (drain con reader roto)
+  devuelve `ErrUnreadableBody` (rama hoy sin cubrir).
+- [ ] SRP: `readFilePart(reader, maxPartBytes)` y
+  `ensureBodyConsumed(body)` tienen una sola razón de cambio y ≤ 20 líneas cada
+  una; `readMultipartPDF` queda ≤ 15 líneas como orquestador.
+- [ ] No se añade ninguna variable de entorno ni parámetro configurable (YAGNI).
+
+**Refactor de referencia:**
+```go
+const (
+	pdfFormField = "file"
+
+	// multipartOverheadAllowance cubre boundaries, cabeceras de parte y el
+	// delimitador de cierre. Sin él, un PDF de exactamente maxBytes se
+	// rechazaría solo por el envoltorio multipart.
+	multipartOverheadAllowance = 8 << 10
+)
+
+func readPDFPayload(r *http.Request, maxBytes int64) ([]byte, error) {
+	// ...
+	case "multipart/form-data":
+		return readMultipartPDF(r, maxBytes, maxBytes+multipartOverheadAllowance)
+	// ...
+}
+
+// readMultipartPDF extrae la parte "file" acotada por maxPartBytes y exige que
+// el cuerpo completo no supere maxBodyBytes.
+func readMultipartPDF(r *http.Request, maxPartBytes, maxBodyBytes int64) ([]byte, error) {
+	// nil es seguro: MaxBytesReader solo hace un type assertion sobre el writer
+	// para avisar a net/http; el 413 lo escribe el handler.
+	r.Body = http.MaxBytesReader(nil, r.Body, maxBodyBytes)
+	reader, err := r.MultipartReader()
+	if err != nil {
+		return nil, ErrMissingFile
+	}
+	data, err := readFilePart(reader, maxPartBytes)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureBodyConsumed(r.Body); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+```
+
+**Verification:**
+- [ ] RED/GREEN: `CGO_ENABLED=0 go test ./internal/presentation/http -run 'TestReadPDFPayload'`
+- [ ] Handler: `CGO_ENABLED=0 go test -tags unit ./internal/presentation/http -run 'TestExtractHandler'`
+- [ ] `make test` y `make build`.
+
+**Dependencies:** ninguna.
+**Files likely touched:** `internal/presentation/http/payload.go`,
+`internal/presentation/http/payload_test.go`,
+`internal/presentation/http/handler_test.go`.
+**Estimated scope:** S/M.
+
+**Principios:** **SRP** (extrae dos funciones con una razón de cambio cada una),
+**DRY** (un solo lugar define cada tope), **KISS** (constante interna, sin
+configuración nueva), **YAGNI** (no se añade un flag para el allowance).
+
+---
+
+### [ ] T34 — Contrato de tags de Consul: helper + documentación
+
+**Descripción:** el PR deja de aceptar `,` como separador. Es un cambio
+incompatible y hoy solo está explicado en un comentario de código. Se extrae la
+función, se cubre con tabla de casos y se documenta el contrato y la migración.
+
+**Acceptance criteria:**
+- [ ] `splitServiceTags(raw string) []string` extraída de `serviceRegistration`,
+  con doc comment que explica por qué la coma **no** es separador.
+- [ ] `TestSplitServiceTags` (tabla) cubre: `""` → `nil`; `"metrics"` →
+  `["metrics"]`; `"a,b"` → `["a,b"]`; `"a;b"` → `["a","b"]`; `" a ; ; b "` →
+  `["a","b"]`; `"a;b,c"` → `["a","b,c"]`.
+- [ ] `TestServiceRegistrationPreservesCommasInsideTags` sigue verde sin
+  cambios (es el test de contrato del composition root).
+- [ ] `README.md` documenta `CONSUL_SERVICE_TAGS` (separador `;`, la coma es
+  parte del valor) y, si ya existen en el código, el resto de `CONSUL_*`.
+- [ ] Tras `RegisterService` con éxito, `main.go` emite **un log de arranque con
+  los tags efectivos** (`"registered in Consul"` o similar, atributo `tags`,
+  nivel `info`) para que un operador detecte en el primer arranque si una config
+  con comas se degradó a un único tag. El log usa el logger ya construido, no
+  `fmt.Print*`.
+- [ ] `TestServiceRegistrationLogsTheEffectiveTags` verifica que el log contiene
+  los tags **después** del split (no el valor crudo de la variable).
+- [ ] Nota de release en este plan, redactada como contrato operativo:
+  *"`CONSUL_SERVICE_TAGS` usa `;` como separador desde este release. La coma se
+  conserva dentro de un tag (necesario para `security-headers@file,extract-cb@file`
+  de Traefik). Si tu entorno usaba comas como separador, migra a `;`: tras
+  actualizar, revisa el log de registro de Consul (`tags`) para confirmar los
+  tags efectivos."* **No** se hace fail-fast: un tag con comas y sin `;` es
+  válido y no se puede distinguir de una config antigua (decisión del usuario:
+  no hay inventario de entornos).
+- [ ] No se añade configuración ni dependencia (YAGNI).
+
+**Verification:**
+- [ ] RED/GREEN: `CGO_ENABLED=0 go test ./cmd/server -run 'TestSplitServiceTags|TestServiceRegistration'`
+- [ ] `make test`.
+
+**Dependencies:** ninguna.
+**Files likely touched:** `cmd/server/main.go`, `cmd/server/main_test.go`,
+`README.md`.
+**Estimated scope:** S.
+
+**Principios:** **SRP** (parsing separado del composition root), **Clean Code**
+(función nombrada y testeable en vez de un `for` inline), **DRY** (una sola
+definición del separador), **KISS** (sin compatibilidad bidireccional ambigua).
+
+---
+
+### [ ] T35 — Endurecer `internal/reqctx`
+
+**Descripción:** la API pública no está documentada, `WithRequestID` se comporta
+distinto de `EnsureRequestID` sin decirlo, hay una constante que solo usa el
+test y el generador de ID es un UUIDv4 artesanal de 12 líneas que la stdlib ya
+resuelve en una (`crypto/rand.Text()`, Go ≥ 1.24; `go.mod` es 1.26). Se fija el
+contrato antes de propagarlo (T36+).
+
+**Acceptance criteria:**
+- [ ] Doc comment en `EnsureRequestID`, `WithRequestID`, `RequestID`, `IsValid`
+  y `newRequestID` (convención del repo).
+- [ ] `WithRequestID` normaliza con `strings.TrimSpace`, igual que
+  `EnsureRequestID`; un ID inválido sigue devolviendo el contexto sin ID, pero
+  ahora está **documentado** y testeado.
+- [ ] `TestWithRequestID` cubre válido, con espacios exteriores, inválido y
+  vacío.
+- [ ] `TestIsValid` cubre el borde exacto: 128 caracteres válidos, 129
+  inválidos; control (`\n`, `\t`), espacio y no-ASCII.
+- [ ] `newRequestID` es **una línea**: `return rand.Text()` (D6). Se eliminan
+  `encoding/hex`, el array de 16 bytes y la manipulación de los bits de versión
+  y variante.
+- [ ] `generatedIDLength` se elimina de producción. El test define su propia
+  constante `wantGeneratedIDLength = 26` (longitud actual de `rand.Text()`),
+  documentada como **contrato mínimo**, no como formato estable.
+- [ ] `TestEnsureRequestIDGeneratesValueWhenMissing` valida: longitud 26,
+  alfabeto base32 RFC 4648 (`A-Z`, `2-7`), que `IsValid` lo acepta y que dos
+  llamadas generan valores **distintos**.
+- [ ] `TestNewRequestIDIsUniqueAcrossCalls` genera un lote (p. ej. 1000) y
+  comprueba que no hay colisiones: evidencia de que dos peticiones no pueden
+  confundirse.
+- [ ] `README.md` deja de prometer un **UUID**: la sección de `X-Request-ID`
+  describe "un identificador aleatorio opaco (26 caracteres base32) cuando el
+  cliente no lo envía". El README es parte del contrato de este release.
+- [ ] Sin helpers nuevos (`MustParse`, `Parse`) ni opciones: YAGNI.
+
+**Refactor de referencia:**
+```go
+// newRequestID genera un identificador de correlación. rand.Text() devuelve 26
+// caracteres base32 con al menos 128 bits de aleatoriedad (Go ≥ 1.24): no
+// puede fallar (paniquea si la fuente del sistema falla) y no necesita
+// coordinación entre réplicas, así que dos peticiones no pueden compartir ID.
+func newRequestID() string { return rand.Text() }
+```
+
+**Verification:**
+- [ ] RED/GREEN: `CGO_ENABLED=0 go test ./internal/reqctx -v`
+- [ ] Auditoría: `grep -rn 'hex.EncodeToString\|generatedIDLength\|randomBytes'
+  --include=*.go internal/` → 0 en producción.
+- [ ] `make test`.
+
+**Dependencies:** ninguna.
+**Files likely touched:** `internal/reqctx/reqctx.go`,
+`internal/reqctx/reqctx_test.go`, `README.md`.
+**Estimated scope:** S.
+
+**Principios:** **Clean Code** (API autoexplicativa, sin fallos silenciosos no
+documentados), **KISS** (una línea de stdlib en vez de 12 de bit-twiddling),
+**YAGNI** (no se añade superficie pública ni dependencia).
+
+---
+
+### [ ] T36 — Helper único `logging.WithRequestID` y refactor de call sites
+
+**Descripción:** el campo `request_id` se añade hoy de cuatro maneras distintas
+(`logger.With`, append condicional, atributo siempre presente con `""`). Se crea
+un helper y se sustituyen todos los puntos para que el esquema sea uno solo.
+
+**Acceptance criteria:**
+- [ ] Nuevo `internal/logging/requestid.go`:
+  ```go
+  // WithRequestID devuelve un logger que añade request_id cuando el contexto lo
+  // trae. Es el único lugar que decide cómo se escribe el campo, para que todas
+  // las líneas de una petición compartan el mismo esquema.
+  func WithRequestID(ctx context.Context, logger *slog.Logger) *slog.Logger
+  ```
+- [ ] `TestWithRequestIDAddsTheField` y `TestWithRequestIDWithoutIDLeavesTheLogUnchanged`.
+- [ ] Se sustituyen los 5 call sites: `middleware.go` (recovery y access log),
+  `logging.go` (`logDecision`), `workerpool.go` (`run` y `logRejection`) y
+  `queued_extractor.go` (abandono).
+- [ ] `logDecision` vuelve a reservar `len(attrs)+2` (con el helper deja de
+  reasignar en cada rechazo).
+- [ ] Esquema único: el campo se **omite** cuando no hay ID; nunca `""`.
+- [ ] Auditoría DRY: `grep -rn '"request_id"' --include=*.go internal/ | grep -v _test.go`
+  devuelve **exactamente 1** línea (el helper).
+- [ ] Sin ciclo de imports: `internal/logging` importa `internal/reqctx` (hoja),
+  y ningún paquete de `internal/reqctx`.
+- [ ] `make test` + `make test-unit` verdes (el refactor no cambia ningún log
+  observable salvo el `""` que desaparece).
+
+**Verification:**
+- [ ] RED/GREEN: `CGO_ENABLED=0 go test ./internal/logging ./internal/presentation/http ./internal/usecase`
+- [ ] Auditoría: `grep -rn '"request_id"' --include=*.go internal/ | grep -v _test.go`
+- [ ] `make test`.
+
+**Dependencies:** T35 (contrato de `reqctx`).
+**Files likely touched:** `internal/logging/requestid.go` (nuevo),
+`internal/logging/requestid_test.go` (nuevo),
+`internal/presentation/http/middleware.go`,
+`internal/presentation/http/logging.go`, `internal/usecase/workerpool.go`,
+`internal/usecase/queued_extractor.go`.
+**Estimated scope:** M.
+
+**Principios:** **DRY** (una sola implementación), **SRP** (el helper solo
+decide el campo), **OCP** (añadir correlación a un log nuevo es usar el helper,
+no copiar el condicional), **KISS** (sin abstracción de "contexto de logging"
+con una sola implementación).
+
+---
+
+### [ ] T37 — Correlación del `panic` del extractor
+
+**Descripción:** el pool pasa un contexto con el ID, pero `extractor.log(ctx)`
+lo ignora, así que `"panic recovered while extracting"` —el log más útil para
+diagnosticar un 500— sale sin `request_id`. Es el AC de T31 que hoy no se
+cumple.
+
+**Acceptance criteria:**
+- [ ] RED: `TestPanicLogCarriesRequestID` falla hoy. Usa un `fakeDocument` cuyo
+  `ToMarkdownAll` paniquea, un logger a buffer y
+  `reqctx.WithRequestID(context.Background(), "orchestrator-123")`.
+- [ ] GREEN: `extractor.log(ctx)` devuelve
+  `logging.WithRequestID(ctx, logger)`; el log contiene
+  `"request_id":"orchestrator-123"`.
+- [ ] El mismo test sigue comprobando `panic` y `stack` (no se pierde el
+  diagnóstico ni el truncado de `logging.Truncate`).
+- [ ] Sin cambios en el contrato de `Extractor` ni en el pool (el contexto ya
+  llevaba el ID).
+- [ ] `make test` verde.
+
+**Verification:**
+- [ ] RED/GREEN: `CGO_ENABLED=0 go test ./internal/infrastructure/pdf -run 'TestPanic'`
+- [ ] `make test`.
+
+**Dependencies:** T36.
+**Files likely touched:** `internal/infrastructure/pdf/extractor.go`,
+`internal/infrastructure/pdf/extractor_test.go`.
+**Estimated scope:** S.
+
+**Principios:** **DRY** (usa el helper, no otro condicional), **Clean Code** (el
+`ctx` deja de ser un parámetro decorativo), **KISS** (una línea de cambio).
+
+---
+
+### [ ] T38 — Tests residuales de correlación
+
+**Descripción:** cubrir las ramas nuevas que hoy no se ejecutan y el AC de T30
+que no tiene test ("un ID inválido no se propaga ni se registra").
+
+**Acceptance criteria:**
+- [ ] `TestWithRequestIDReplacesAnInvalidHeader` (tabla): `"bad id"` (espacio),
+  `"a\nb"` (control), 129 caracteres. En los tres: el header de respuesta es un
+  ID generado, el contexto no conserva el valor inválido y el valor crudo **no**
+  aparece en los logs.
+- [ ] `TestWorkerPoolLogsTheRequestIDWhenTheQueueIsFull` cubre la rama con ID de
+  `logRejection` (hoy `logRejection` está al 80%).
+- [ ] `TestQueuedExtractorLogsTheRequestIDWhenTheRequestIsAbandoned` cubre la
+  rama con ID de `queued_extractor.go` (hoy sin test: `grep abandoned` en tests
+  devuelve 0).
+- [ ] `go tool cover -func` confirma que las ramas nuevas de `middleware.go`,
+  `workerpool.go`, `queued_extractor.go` y `payload.go` quedan ejecutadas.
+- [ ] No se duplica el helper de tests existente (`newRecordingLogger`,
+  `decodeLogLine`): se reutiliza.
+
+**Verification:**
+- [ ] `CGO_ENABLED=0 go test ./internal/presentation/http ./internal/usecase`
+- [ ] `CGO_ENABLED=0 go test -coverprofile=/tmp/cover.out ./internal/... && CGO_ENABLED=0 go tool cover -func=/tmp/cover.out | grep -E 'middleware|workerpool|queued|payload'`
+- [ ] `make test`.
+
+**Dependencies:** T36, T37.
+**Files likely touched:**
+`internal/presentation/http/accesslog_recovery_test.go`,
+`internal/usecase/workerpool_logging_test.go`,
+`internal/usecase/queued_extractor_test.go`.
+**Estimated scope:** S.
+
+**Principios:** **Clean Code** (F.I.R.S.T.: reutiliza helpers, sin tests
+duplicados), **DRY** (una tabla para los tres casos inválidos).
+
+---
+
+### [ ] T39 — Dockerfile consistente y README alineado
+
+**Descripción:** el runtime se cambió de `cc-debian12:nonroot` a
+`base-debian13@digest` + copia manual de `libgcc_s.so.1`. Funciona, pero el pin
+es inconsistente entre stages, el README afirma `:nonroot` y el `Dockerfile` no
+lo dice, y se eliminaron los comentarios que explican decisiones no obvias.
+
+**Acceptance criteria:**
+- [ ] Ambos stages de Go pinneados al mismo patch
+  (`golang:1.26.10-bookworm` en `oxide` y `builder`).
+- [ ] Comentarios restaurados: por qué `CGO_ENABLED=0` es `ENV` (el target `test`
+  lo hereda), por qué se copia `libgcc_s.so.1`, y el gate
+  `docker build --target test .`.
+- [ ] `README.md` coincide con el `Dockerfile`: no se afirma `:nonroot` si el
+  digest no lo garantiza; se documenta que `USER 65532:65532` es la garantía
+  efectiva.
+- [ ] Decisión D5 registrada: se mantiene `base-debian13` (verificado) y
+  `cc-debian13:nonroot` queda como backlog (§10).
+- [ ] `docker inspect --format '{{.Config.User}}' <imagen>` devuelve `65532:65532`.
+- [ ] `docker build --target test .` y `docker build --target runtime .` verdes.
+- [ ] Smoke: `/healthz` responde `ok` y una extracción real con
+  `X-Request-ID: orchestrator-123` devuelve el header y aparece en el access log.
+- [ ] Sin cambios de comportamiento en la aplicación.
+
+**Verification:**
+- [ ] `docker build --target test .`
+- [ ] `docker build --target runtime .`
+- [ ] `docker run --rm -p 8080:8080 <imagen>` + `curl /healthz` + `curl` de un PDF real.
+- [ ] `docker inspect` del usuario efectivo.
+
+**Dependencies:** ninguna.
+**Files likely touched:** `Dockerfile`, `README.md`.
+**Estimated scope:** S.
+
+**Principios:** **KISS** (no se migra de base sin necesidad), **DRY** (un solo
+pin de Go), **Clean Code** (rationale donde no es obvio), **YAGNI** (el cambio a
+`cc` queda fuera del RC).
+
+---
+
+### [ ] T40 — Coherencia documental del RC
+
+**Descripción:** el plan y el todo arrastran contradicciones que son la
+evidencia de release: `cc-debian12` vs `base-debian13`, una frase truncada, un
+riesgo que dice que no se cambia la imagen, y checkpoints sin marcar.
+
+**Acceptance criteria:**
+- [ ] §15 (`plan-markdown.md:327`) deja de decir `cc-debian12:nonroot`; una sola
+  imagen runtime en todo el documento.
+- [ ] Frase truncada de `plan-markdown.md:462` completada ("Se reemplazó X por Y").
+- [ ] `plan-markdown.md:379` ("No se cambia la imagen base") corregido o eliminado.
+- [ ] `todo-markdown.md:594` (Checkpoint G) marcado o justificado; `T24` cerrada
+  como superada por la Parte 5/6.
+- [ ] `README.md` sin afirmaciones que el `Dockerfile` no respalde.
+- [ ] Tabla de `CONSUL_*` presente (de T34) y coherente con el código.
+- [ ] `README.md` y `docs/` **no** prometen un UUID para `X-Request-ID`; describen
+  el identificador generado como opaco (D6).
+- [ ] `git diff --check` limpio y `grep -n "cc-debian12" tasks/ README.md` sin
+  resultados (salvo mención histórica explícita, si se decide conservarla).
+- [ ] `grep -rni "uuid" README.md docs/ tasks/plan-markdown.md` sin promesas
+  vigentes: solo se admite una mención histórica explícita ("antes se generaba un
+  UUIDv4"), nunca como contrato actual.
+
+**Verification:**
+- [ ] `grep -rn "cc-debian12\|No se cambia la imagen base" tasks/ README.md`
+- [ ] `grep -rni "uuid" README.md docs/`
+- [ ] `git diff --check`
+- [ ] Lectura cruzada README ↔ Dockerfile ↔ plan.
+
+**Dependencies:** T33, T34, T39, T41 (describen el estado final).
+**Files likely touched:** `tasks/plan-markdown.md`, `tasks/todo-markdown.md`,
+`README.md`, `docs/technical-guide.md`.
+**Estimated scope:** S.
+
+**Principios:** **Clean Code** (documentación sin contradicciones), **DRY** (una
+sola fuente de verdad para imagen, límites, tags y formato de ID).
+
+---
+
+### [ ] T41 — Hardening del contenedor en `docker-compose.yml`
+
+**Descripción:** el runtime ya es distroless y no-root (`USER 65532:65532`), no
+escribe en disco y no necesita privilegios, pero el compose no lo declara. Se
+añade el hardening mínimo al servicio `app` para que el contrato esté en el
+despliegue y no solo en la imagen. Entra en este RC (D7).
+
+**Acceptance criteria:**
+- [ ] El servicio `app` declara `read_only: true`.
+- [ ] El servicio `app` declara `security_opt: ["no-new-privileges:true"]`.
+- [ ] El servicio `app` declara `cap_drop: ["ALL"]`.
+- [ ] `tmpfs: /tmp` **solo** si el smoke con PDF real falla por escritura en
+  `/tmp`; en ese caso se documenta el motivo en un comentario del compose. Si el
+  smoke pasa sin `tmpfs`, **no** se añade (YAGNI).
+- [ ] No se endurecen `traefik` ni el resto de servicios: monta el socket de
+  Docker y necesita capacidades; el alcance es el servicio `app`.
+- [ ] `docker compose config` valida sin errores y sin warnings de claves
+  desconocidas.
+- [ ] `docker inspect` del contenedor en ejecución confirma
+  `HostConfig.ReadonlyRootfs=true`, `HostConfig.SecurityOpt` con
+  `no-new-privileges` y `HostConfig.CapDrop=["ALL"]`.
+- [ ] Smoke end-to-end: `/healthz` responde `ok` y una extracción real de PDF
+  devuelve Markdown; los logs no muestran errores de escritura.
+- [ ] El `docker-compose.traefik.yml` sigue funcionando por *merge*
+  (`docker compose -f docker-compose.yml -f docker-compose.traefik.yml config`).
+- [ ] Sin cambios en `Dockerfile`, en código Go ni en variables de entorno.
+
+**Verification:**
+- [ ] `docker compose config`
+- [ ] `docker compose up -d --build` + `curl /healthz` + `curl` de un PDF real.
+- [ ] `docker inspect --format '{{json .HostConfig}}' <contenedor>` y comprobar
+  `ReadonlyRootfs`, `SecurityOpt`, `CapDrop`.
+- [ ] `docker compose down`.
+
+**Dependencies:** T39 (la imagen es la que se endurece).
+**Files likely touched:** `docker-compose.yml`, `README.md` (si se documenta el
+hardening).
+**Estimated scope:** S.
+
+**Principios:** **KISS** (tres claves estándar, sin perfiles ni overrides
+nuevos), **YAGNI** (`tmpfs` solo si una prueba lo exige), **Clean Code**
+(comentario con el motivo cuando una clave no es obvia). Seguridad: la imagen ya
+es no-root; el compose elimina la superficie restante del contenedor.
+
+---
+
+## 6. Checkpoints
+
+### Checkpoint H — Payload y contrato de entrada
+- [ ] T33 y T34 completadas.
+- [ ] `make test` + `make test-unit` + `make build` verdes.
+- [ ] Test de frontera (PDF == `MAX_UPLOAD_MB` en multipart) en verde.
+- [ ] Revisión con humano antes de tocar la correlación.
+
+### Checkpoint I — Contrato de correlación
+- [ ] T35 y T36 completadas.
+- [ ] Auditoría DRY de `request_id` devuelve 1 línea.
+- [ ] `make test` verde; ningún log cambia de esquema salvo la desaparición del `""`.
+
+### Checkpoint J — Correlación completa
+- [ ] T37 y T38 completadas.
+- [ ] El panic del extractor lleva `request_id`.
+- [ ] Las ramas nuevas quedan cubiertas (`go tool cover -func`).
+
+### Checkpoint K — Runtime
+- [ ] T39 y T41 completadas.
+- [ ] `docker build --target test .` y `--target runtime .` verdes.
+- [ ] `docker compose config` válido.
+- [ ] Smoke `/healthz` + extracción real + usuario `65532:65532`.
+- [ ] Contenedor `app` con `read_only`, `cap_drop: ALL` y `no-new-privileges`
+  confirmados con `docker inspect`.
+
+### Checkpoint Final RC
+- [ ] T40 completada.
+- [ ] Definition of Done (§2) completa.
+- [ ] Revisión con humano antes de aprobar el merge.
+
+## 7. Puertas de principio (verificación ejecutable)
+
+| Principio | Puerta | Comando / criterio |
+|---|---|---|
+| **DRY** | Un solo `request_id` | `grep -rn '"request_id"' --include=*.go internal/ \| grep -v _test.go` → 1 |
+| **DRY** | Un solo separador de tags | `grep -rn "Split(.*CONSUL_SERVICE_TAGS" --include=*.go .` → 0 (vive en `splitServiceTags`) |
+| **SRP** | Funciones nuevas ≤ 20 líneas | revisión + `gofmt`; `readFilePart`/`ensureBodyConsumed`/`splitServiceTags`/`WithRequestID` |
+| **Clean** | API documentada | `go doc ./internal/reqctx ./internal/logging` sin funciones exportadas sin comentario |
+| **Clean** | Formato y vet | `gofmt -l .` vacío; `go vet ./...` limpio |
+| **SOLID-D** | `reqctx` hoja | `go list -f '{{join .Imports "\n"}}' ./internal/reqctx` → solo stdlib |
+| **SOLID-S** | Sin paquetes con dos razones de cambio | `payload.go` separa lectura de parte y validación de cuerpo |
+| **KISS** | Cero dependencias nuevas | `git diff go.mod go.sum` vacío |
+| **KISS** | Cero configuración nueva | `git diff internal/config` vacío |
+| **KISS** | Generación de ID sin bit-twiddling | `grep -rn 'hex.EncodeToString\|generatedIDLength\|randomBytes' --include=*.go internal/ \| grep -v _test.go` → 0 |
+| **YAGNI** | Sin abstracciones de un solo uso | no se añaden interfaces, flags ni helpers no usados por ≥ 2 call sites |
+| **YAGNI** | `tmpfs` solo con evidencia | `grep -n "tmpfs" docker-compose.yml` → 0 salvo que el smoke lo exija |
+| **Seguridad** | Contenedor sin privilegios | `docker inspect` → `ReadonlyRootfs=true`, `CapDrop=["ALL"]`, `no-new-privileges` |
+| **Tests** | RED antes de GREEN | cada tarea de comportamiento cita el test que falla sin el cambio |
+
+## 8. Riesgos y mitigaciones
+
+| Riesgo | Impacto | Mitigación |
+|---|---|---|
+| El allowance multipart (8 KiB) se queda corto con boundaries largos | Bajo | El allowance es holgado (8 KiB vs ~300 B reales); test de frontera con boundary estándar y uno largo |
+| Un test existente cambia de supuesto (T33) | Medio | Se reescribe con justificación explícita; no se borra cobertura, se reubica en el tope correcto |
+| Entornos con tags separados por comas | Medio | Nota de release + README; el cambio de comportamiento es intencional (D2) |
+| `logging` importa `reqctx` y alguien lo invierte | Bajo | `reqctx` sigue siendo hoja; la puerta SOLID-D lo verifica |
+| El gate Docker no se puede ejecutar en local/CI sin red | Medio | Se documenta como requisito del checkpoint K; no se marca el RC como verificado sin él |
+| Cambiar el esquema de logs (desaparece `request_id: ""`) rompe un dashboard | Bajo | Es una mejora de contrato; se anota en la nota de release |
+| `rand.Text()` deja de ser un UUID reconocible y un colector que detecte UUIDs ya no enlaza el ID | Bajo | Es opaco y válido igual (26 chars base32); se documenta en README y nota de release. Si un dashboard depende del formato UUID, se adapta el parser, no el servicio (D6) |
+| `read_only: true` rompe si `libpdf_oxide`/`purego` escriben en `/tmp` | Medio | Smoke con PDF real antes de cerrar K; si falla, `tmpfs: /tmp` documentado. La prueba decide, no la precaución (D7) |
+| `cap_drop: ALL` impide alguna operación legítima del runtime | Bajo | El servicio no usa puertos privilegiados, ni raw sockets, ni chown; el smoke lo confirma |
+
+## 9. Estado de ejecución
+
+- [ ] T33 — pendiente
+- [ ] T34 — pendiente
+- [ ] T35 — pendiente
+- [ ] T36 — pendiente
+- [ ] T37 — pendiente
+- [ ] T38 — pendiente
+- [ ] T39 — pendiente
+- [ ] T40 — pendiente
+- [ ] T41 — pendiente
+
+## 10. Fuera de alcance (YAGNI / backlog)
+
+Se registran para que no se reabran sin decisión explícita:
+
+- **Migrar a `gcr.io/distroless/cc-debian13:nonroot`** para eliminar la copia
+  manual de `libgcc_s.so.1`. Requiere verificar digest y re-ejecutar el smoke;
+  no aporta al RC y invalidaría la verificación actual (D5).
+- **`request_id` dentro del `problem+json`** (campo `instance` de RFC 9457). El
+  cliente ya recibe el header `X-Request-ID`; añadirlo al body no tiene
+  requisito asociado.
+- **Error específico para multipart malformado** (hoy `ErrMissingFile`). Cambia
+  un mensaje sin impacto operativo; el status ya es 400.
+- **Hacer configurable el allowance multipart.** Es un detalle de
+  implementación; una variable de entorno más es superficie sin demanda.
+- **Métricas, tracing o endpoint de telemetría.** El servicio declara
+  explícitamente "sólo logging".
+- **Endurecer `traefik` en el compose.** Monta el socket de Docker y necesita
+  capacidades; el hardening de este RC se limita al servicio `app` (D7).
+- **Sustituir `deploy.replicas` por `--scale`/réplicas reales en compose.** Hoy
+  el compose no orquesta réplicas sin Swarm; es un problema de despliegue
+  preexistente, ajeno a los hallazgos del review.
+
+## 11. Decisiones cerradas y preguntas abiertas
+
+**Cerradas por el usuario (2026-11-03):**
+
+1. **`CONSUL_SERVICE_TAGS` con comas:** no hay inventario de entornos, así que
+   **no** se hace fail-fast ni se adivina compatibilidad. Se mitiga con el log
+   de tags efectivos al arrancar + README + nota de release (T34, D2).
+2. **Formato del ID:** se adopta `crypto/rand.Text()` (D6). Es único con
+   probabilidad despreciable de colisión (≥ 128 bits, sin coordinación entre
+   réplicas), y el contrato de validación no cambia. Coste aceptado: el README
+   deja de prometer UUID y el tooling que auto-detecta UUIDs no lo verá.
+3. **Hardening de compose:** **entra en este RC** (D7, T41).
+
+**Abierta:**
+
+1. ¿Quién ejecuta el gate Docker del Checkpoint K (requiere acceso a registry)?
