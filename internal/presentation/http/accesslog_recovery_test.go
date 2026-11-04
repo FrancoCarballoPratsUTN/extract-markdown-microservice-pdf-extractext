@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/reqctx"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/usecase"
 )
 
@@ -17,6 +18,69 @@ import (
 // buffer.
 func newRecordingLogger(buffer *bytes.Buffer) *slog.Logger {
 	return logging.NewWithOptions(logging.Options{Level: slog.LevelDebug, Output: buffer})
+}
+
+func TestWithRequestIDPreservesOrGeneratesResponseHeader(t *testing.T) {
+	tests := []struct {
+		name      string
+		header    string
+		wantValue string
+	}{
+		{name: "preserves orchestrator ID", header: "orchestrator-123", wantValue: "orchestrator-123"},
+		{name: "generates missing ID", wantValue: "generated"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler := withRequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if reqctx.RequestID(r.Context()) == "" {
+					t.Fatal("request ID missing from context")
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+			if test.header != "" {
+				request.Header.Set("X-Request-ID", test.header)
+			}
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			got := response.Header().Get("X-Request-ID")
+			if test.wantValue == "generated" {
+				if got == "" || got == test.header {
+					t.Fatalf("generated request ID = %q", got)
+				}
+				return
+			}
+			if got != test.wantValue {
+				t.Fatalf("response request ID = %q, want %q", got, test.wantValue)
+			}
+		})
+	}
+}
+
+func TestRoutesCorrelatesRequestIDInResponseAndAccessLog(t *testing.T) {
+	var output bytes.Buffer
+	handler := Routes(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := reqctx.RequestID(r.Context()); got != "orchestrator-123" {
+			t.Errorf("context request ID = %q, want orchestrator-123", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}), newRecordingLogger(&output))
+
+	request := httptest.NewRequest(http.MethodPost, "/extract", nil)
+	request.Header.Set("X-Request-ID", "orchestrator-123")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if got := response.Header().Get("X-Request-ID"); got != "orchestrator-123" {
+		t.Fatalf("response request ID = %q, want orchestrator-123", got)
+	}
+	if !strings.Contains(output.String(), `"request_id":"orchestrator-123"`) {
+		t.Fatalf("access log missing request ID: %s", output.String())
+	}
 }
 
 // The access log is the audit trail of the service: it must record the

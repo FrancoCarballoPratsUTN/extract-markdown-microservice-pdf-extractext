@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/reqctx"
 )
 
 // ErrQueueFull reports that the bounded queue had no room for the job. Callers
@@ -28,8 +29,9 @@ type JobResult struct {
 // submitter, which is what stops concurrent callers from receiving each other's
 // documents.
 type job struct {
-	data   []byte
-	result chan JobResult
+	data      []byte
+	result    chan JobResult
+	requestID string
 }
 
 // WorkerPool decouples HTTP request handling from the CPU-bound extraction. It
@@ -121,7 +123,12 @@ func (wp *WorkerPool) work() {
 // already in flight.
 func (wp *WorkerPool) run(j job) JobResult {
 	start := time.Now()
-	resp, err := wp.extractor.Extract(context.Background(), j.data)
+	extractionContext := reqctx.WithRequestID(context.Background(), j.requestID)
+	logger := wp.logger
+	if j.requestID != "" {
+		logger = logger.With("request_id", j.requestID)
+	}
+	resp, err := wp.extractor.Extract(extractionContext, j.data)
 	duration := time.Since(start).Milliseconds()
 
 	// The PDF is unreachable from here on, so give its budget back before
@@ -129,10 +136,10 @@ func (wp *WorkerPool) run(j job) JobResult {
 	wp.budget.release(int64(len(j.data)))
 
 	if err != nil {
-		wp.logger.Error("extraction failed", "duration_ms", duration, "error", err)
+		logger.Error("extraction failed", "duration_ms", duration, "error", err)
 		return JobResult{Err: err}
 	}
-	wp.logger.Info("extraction completed", "pages", resp.PageCount, "duration_ms", duration)
+	logger.Info("extraction completed", "pages", resp.PageCount, "duration_ms", duration)
 	return JobResult{Resp: resp}
 }
 
@@ -156,7 +163,11 @@ func (wp *WorkerPool) Submit(ctx context.Context, data []byte) (chan JobResult, 
 		return nil, ErrQueueFull
 	}
 
-	j := job{data: data, result: make(chan JobResult, 1)}
+	j := job{
+		data:      data,
+		result:    make(chan JobResult, 1),
+		requestID: reqctx.RequestID(ctx),
+	}
 	select {
 	case wp.jobs <- j:
 		wp.mu.Unlock()
@@ -172,7 +183,12 @@ func (wp *WorkerPool) Submit(ctx context.Context, data []byte) (chan JobResult, 
 // logRejection reports that a job could not be admitted. Both reasons mean the
 // same thing to the caller: this replica is saturated.
 func (wp *WorkerPool) logRejection(ctx context.Context, size int64) {
-	wp.logger.Warn("queue full; rejecting job", "bytes", size)
+	requestID := reqctx.RequestID(ctx)
+	if requestID == "" {
+		wp.logger.Warn("queue full; rejecting job", "bytes", size)
+		return
+	}
+	wp.logger.Warn("queue full; rejecting job", "bytes", size, "request_id", requestID)
 }
 
 // Wait blocks for a submitted job's result, or returns the context error if the

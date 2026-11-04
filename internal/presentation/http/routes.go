@@ -28,7 +28,7 @@ func Routes(extract http.Handler, logger *slog.Logger) http.Handler {
 	mux.Handle("/extract", extract)
 	mux.HandleFunc("/", notFoundHandler)
 
-	return withRequestLog(logger)(withRecovery(logger)(mux))
+	return withRequestID(withRequestLog(logger)(withRecovery(logger)(mux)))
 }
 
 // healthHandler responde a la sonda de vida. Es estática: no consulta
