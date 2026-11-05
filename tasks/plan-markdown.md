@@ -934,7 +934,7 @@ duplicados), **DRY** (una tabla para los tres casos inválidos).
 
 ---
 
-### [ ] T39 — Dockerfile consistente y README alineado
+### [x] T39 — Dockerfile consistente y README alineado
 
 **Descripción:** el runtime se cambió de `cc-debian12:nonroot` a
 `base-debian13@digest` + copia manual de `libgcc_s.so.1`. Funciona, pero el pin
@@ -942,19 +942,19 @@ es inconsistente entre stages, el README afirma `:nonroot` y el `Dockerfile` no
 lo dice, y se eliminaron los comentarios que explican decisiones no obvias.
 
 **Acceptance criteria:**
-- [ ] Ambos stages de Go pinneados al mismo patch
+- [x] Ambos stages de Go pinneados al mismo patch
   (`golang:1.26.10-bookworm` en `oxide` y `builder`).
-- [ ] Comentarios restaurados: por qué `CGO_ENABLED=0` es `ENV` (el target `test`
+- [x] Comentarios restaurados: por qué `CGO_ENABLED=0` es `ENV` (el target `test`
   lo hereda), por qué se copia `libgcc_s.so.1`, y el gate
   `docker build --target test .`.
-- [ ] `README.md` coincide con el `Dockerfile`: no se afirma `:nonroot` si el
+- [x] `README.md` coincide con el `Dockerfile`: no se afirma `:nonroot` si el
   digest no lo garantiza; se documenta que `USER 65532:65532` es la garantía
   efectiva.
-- [ ] Decisión D5 registrada: se mantiene `base-debian13` (verificado) y
+- [x] Decisión D5 registrada: se mantiene `base-debian13` (verificado) y
   `cc-debian13:nonroot` queda como backlog (§10).
-- [ ] `docker inspect --format '{{.Config.User}}' <imagen>` devuelve `65532:65532`.
-- [ ] `docker build --target test .` y `docker build --target runtime .` verdes.
-- [ ] Smoke: `/healthz` responde `ok` y una extracción real con
+- [x] `docker inspect --format '{{.Config.User}}' <imagen>` devuelve `65532:65532`.
+- [x] `docker build --target test .` y `docker build --target runtime .` verdes.
+- [x] Smoke: `/healthz` responde `ok` y una extracción real con
   `X-Request-ID: orchestrator-123` devuelve el header y aparece en el access log.
 - [ ] Sin cambios de comportamiento en la aplicación.
 
@@ -1134,7 +1134,7 @@ es no-root; el compose elimina la superficie restante del contenedor.
 - [ ] T36 — pendiente
 - [x] T37 — completada (2026-11-05)
 - [x] T38 — completada (2026-11-05)
-- [ ] T39 — pendiente
+- [x] T39 — completada (2026-11-05)
 - [ ] T40 — pendiente
 - [ ] T41 — pendiente
 

@@ -47,8 +47,10 @@ curl -X POST --data-binary @tests/stress/pdfs/2020-Scrum-Guide-Spanish-Latin-Sou
 
 ## CVE-2025-60876 y el healthcheck
 
-La imagen runtime usa `gcr.io/distroless/base-debian13:nonroot`, fijada al
-digest `sha256:9039a88709bcc2bacf5a2faac331d65dd6840f763f225ad9594cc0c67bcd0fba`.
+La imagen runtime usa `gcr.io/distroless/base-debian13`, fijada al digest
+`sha256:9039a88709bcc2bacf5a2faac331d65dd6840f763f225ad9594cc0c67bcd0fba`.
+El `Dockerfile` fija explícitamente `USER 65532:65532`, que es la garantía
+efectiva de ejecución no privilegiada; el digest no se asume como `:nonroot`.
 No incluye `wget` ni un `HEALTHCHECK` interno. Alpine 3.24.3 fue descartada
 porque `pdf_oxide` requiere símbolos `glibc` hasta `GLIBC_2.35` y `gcompat`
 no permite cargar la biblioteca nativa. Las sondas externas pueden consultar
