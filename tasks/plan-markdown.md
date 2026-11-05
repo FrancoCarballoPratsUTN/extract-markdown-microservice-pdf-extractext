@@ -526,19 +526,19 @@ justifica por escrito.
 
 Ninguna tarea se marca `[x]` si no se cumplen **todas** estas puertas:
 
-- [ ] `make test` verde (`CGO_ENABLED=0 go vet ./... && go test ./...`).
-- [ ] `make test-unit` verde (`go test -tags unit ./...`).
-- [ ] `make build` verde.
-- [ ] `docker build --target test .` verde.
-- [ ] `docker build --target runtime .` verde + smoke `/healthz` + extracción real.
-- [ ] `docker compose config` válido y el servicio endurecido corre con
+- [x] `make test` verde (`CGO_ENABLED=0 go vet ./... && go test ./...`).
+- [x] `make test-unit` verde (`go test -tags unit ./...`).
+- [x] `make build` verde.
+- [x] `docker build --target test .` verde.
+- [x] `docker build --target runtime .` verde + smoke `/healthz` + extracción real.
+- [x] `docker compose config` válido y el servicio endurecido corre con
   `read_only`, `cap_drop: ALL` y `no-new-privileges` (T41).
-- [ ] `gofmt -l .` sin salida y `git diff --check` limpio.
-- [ ] `git diff go.mod go.sum` vacío: **cero dependencias nuevas**.
-- [ ] Cada comportamiento nuevo tiene un test que falla sin el cambio (evidencia RED en la descripción del PR).
-- [ ] Las ramas nuevas quedan cubiertas: `go tool cover -func` sin líneas nuevas sin ejecutar.
-- [ ] Toda función exportada nueva tiene doc comment (convención del repo).
-- [ ] Los docs describen una sola verdad (imagen, límites, tags, `X-Request-ID`).
+- [x] `gofmt -l .` sin salida y `git diff --check` limpio.
+- [x] `git diff go.mod go.sum` vacío: **cero dependencias nuevas**.
+- [x] Cada comportamiento nuevo tiene un test que falla sin el cambio (evidencia RED en la descripción del PR).
+- [x] Las ramas nuevas quedan cubiertas: `go tool cover -func` sin líneas nuevas sin ejecutar.
+- [x] Toda función exportada nueva tiene doc comment (convención del repo).
+- [x] Los docs describen una sola verdad (imagen, límites, tags, `X-Request-ID`).
 
 ## 3. Decisiones de diseño
 
@@ -836,7 +836,7 @@ un helper y se sustituyen todos los puntos para que el esquema sea uno solo.
   // las líneas de una petición compartan el mismo esquema.
   func WithRequestID(ctx context.Context, logger *slog.Logger) *slog.Logger
   ```
-- [ ] `TestWithRequestIDAddsTheField` y `TestWithRequestIDWithoutIDLeavesTheLogUnchanged`.
+- [x] `TestWithRequestIDAddsTheField` y `TestWithRequestIDWithoutIDLeavesTheLogUnchanged`.
 - [x] Se sustituyen los 5 call sites: `middleware.go` (recovery y access log),
   `logging.go` (`logDecision`), `workerpool.go` (`run` y `logRejection`) y
   `queued_extractor.go` (abandono).
@@ -963,13 +963,13 @@ lo dice, y se eliminaron los comentarios que explican decisiones no obvias.
 - [x] `docker build --target test .` y `docker build --target runtime .` verdes.
 - [x] Smoke: `/healthz` responde `ok` y una extracción real con
   `X-Request-ID: orchestrator-123` devuelve el header y aparece en el access log.
-- [ ] Sin cambios de comportamiento en la aplicación.
+- [x] Sin cambios de comportamiento en la aplicación.
 
 **Verification:**
-- [ ] `docker build --target test .`
-- [ ] `docker build --target runtime .`
-- [ ] `docker run --rm -p 8080:8080 <imagen>` + `curl /healthz` + `curl` de un PDF real.
-- [ ] `docker inspect` del usuario efectivo.
+- [x] `docker build --target test .`
+- [x] `docker build --target runtime .`
+- [x] `docker run --rm -p 8080:8080 <imagen>` + `curl /healthz` + `curl` de un PDF real.
+- [x] `docker inspect` del usuario efectivo.
 
 **Dependencies:** ninguna.
 **Files likely touched:** `Dockerfile`, `README.md`.
@@ -1026,7 +1026,7 @@ sola fuente de verdad para imagen, límites, tags y formato de ID).
 
 ---
 
-### [ ] T41 — Hardening del contenedor en `docker-compose.yml`
+### [x] T41 — Hardening del contenedor en `docker-compose.yml`
 
 **Descripción:** el runtime ya es distroless y no-root (`USER 65532:65532`), no
 escribe en disco y no necesita privilegios, pero el compose no lo declara. Se
@@ -1034,31 +1034,40 @@ añade el hardening mínimo al servicio `app` para que el contrato esté en el
 despliegue y no solo en la imagen. Entra en este RC (D7).
 
 **Acceptance criteria:**
-- [ ] El servicio `app` declara `read_only: true`.
-- [ ] El servicio `app` declara `security_opt: ["no-new-privileges:true"]`.
-- [ ] El servicio `app` declara `cap_drop: ["ALL"]`.
-- [ ] `tmpfs: /tmp` **solo** si el smoke con PDF real falla por escritura en
+- [x] El servicio `app` declara `read_only: true`.
+- [x] El servicio `app` declara `security_opt: ["no-new-privileges:true"]`.
+- [x] El servicio `app` declara `cap_drop: ["ALL"]`.
+- [x] `tmpfs: /tmp` **solo** si el smoke con PDF real falla por escritura en
   `/tmp`; en ese caso se documenta el motivo en un comentario del compose. Si el
   smoke pasa sin `tmpfs`, **no** se añade (YAGNI).
-- [ ] No se endurecen `traefik` ni el resto de servicios: monta el socket de
+- [x] No se endurecen `traefik` ni el resto de servicios: monta el socket de
   Docker y necesita capacidades; el alcance es el servicio `app`.
-- [ ] `docker compose config` valida sin errores y sin warnings de claves
+- [x] `docker compose config` valida sin errores y sin warnings de claves
   desconocidas.
-- [ ] `docker inspect` del contenedor en ejecución confirma
+- [x] `docker inspect` del contenedor en ejecución confirma
   `HostConfig.ReadonlyRootfs=true`, `HostConfig.SecurityOpt` con
   `no-new-privileges` y `HostConfig.CapDrop=["ALL"]`.
-- [ ] Smoke end-to-end: `/healthz` responde `ok` y una extracción real de PDF
+- [x] Smoke end-to-end: `/healthz` responde `ok` y una extracción real de PDF
   devuelve Markdown; los logs no muestran errores de escritura.
-- [ ] El `docker-compose.traefik.yml` sigue funcionando por *merge*
+- [x] El `docker-compose.traefik.yml` sigue funcionando por *merge*
   (`docker compose -f docker-compose.yml -f docker-compose.traefik.yml config`).
-- [ ] Sin cambios en `Dockerfile`, en código Go ni en variables de entorno.
+- [x] Sin cambios en `Dockerfile`, en código Go ni en variables de entorno.
 
 **Verification:**
-- [ ] `docker compose config`
-- [ ] `docker compose up -d --build` + `curl /healthz` + `curl` de un PDF real.
-- [ ] `docker inspect --format '{{json .HostConfig}}' <contenedor>` y comprobar
+- [x] `docker compose config`
+- [x] `docker compose up -d --build` + `curl /healthz` + `curl` de un PDF real.
+- [x] `docker inspect --format '{{json .HostConfig}}' <contenedor>` y comprobar
   `ReadonlyRootfs`, `SecurityOpt`, `CapDrop`.
-- [ ] `docker compose down`.
+- [x] `docker compose down`.
+
+**Resultado (2026-11-05):** las cinco réplicas corren con
+`ReadonlyRootfs=true`, `SecurityOpt=[no-new-privileges:true]`,
+`CapDrop=[ALL]` y UID efectivo `65532` (`docker top`). `/healthz` → `ok` y
+`POST /extract` con `2020-Scrum-Guide-Spanish-Latin-South-American.pdf` → 200
+con Markdown (16 páginas, `request_id=orchestrator-t41-smoke` en access log y
+pipeline), sin errores de escritura en logs. No fue necesario `tmpfs` (D7). El
+merge con `docker-compose.traefik.yml` conserva el hardening y no emite
+warnings.
 
 **Dependencies:** T39 (la imagen es la que se endurece).
 **Files likely touched:** `docker-compose.yml`, `README.md` (si se documenta el
@@ -1075,32 +1084,32 @@ es no-root; el compose elimina la superficie restante del contenedor.
 ## 6. Checkpoints
 
 ### Checkpoint H — Payload y contrato de entrada
-- [ ] T33 y T34 completadas.
-- [ ] `make test` + `make test-unit` + `make build` verdes.
-- [ ] Test de frontera (PDF == `MAX_UPLOAD_MB` en multipart) en verde.
+- [x] T33 y T34 completadas.
+- [x] `make test` + `make test-unit` + `make build` verdes.
+- [x] Test de frontera (PDF == `MAX_UPLOAD_MB` en multipart) en verde.
 - [ ] Revisión con humano antes de tocar la correlación.
 
 ### Checkpoint I — Contrato de correlación
-- [ ] T35 y T36 completadas.
-- [ ] Auditoría DRY de `request_id` devuelve 1 línea.
-- [ ] `make test` verde; ningún log cambia de esquema salvo la desaparición del `""`.
+- [x] T35 y T36 completadas.
+- [x] Auditoría DRY de `request_id` devuelve 1 línea.
+- [x] `make test` verde; ningún log cambia de esquema salvo la desaparición del `""`.
 
 ### Checkpoint J — Correlación completa
-- [ ] T37 y T38 completadas.
-- [ ] El panic del extractor lleva `request_id`.
-- [ ] Las ramas nuevas quedan cubiertas (`go tool cover -func`).
+- [x] T37 y T38 completadas.
+- [x] El panic del extractor lleva `request_id`.
+- [x] Las ramas nuevas quedan cubiertas (`go tool cover -func`).
 
 ### Checkpoint K — Runtime
-- [ ] T39 y T41 completadas.
-- [ ] `docker build --target test .` y `--target runtime .` verdes.
-- [ ] `docker compose config` válido.
-- [ ] Smoke `/healthz` + extracción real + usuario `65532:65532`.
-- [ ] Contenedor `app` con `read_only`, `cap_drop: ALL` y `no-new-privileges`
+- [x] T39 y T41 completadas.
+- [x] `docker build --target test .` y `--target runtime .` verdes.
+- [x] `docker compose config` válido.
+- [x] Smoke `/healthz` + extracción real + usuario `65532:65532`.
+- [x] Contenedor `app` con `read_only`, `cap_drop: ALL` y `no-new-privileges`
   confirmados con `docker inspect`.
 
 ### Checkpoint Final RC
 - [x] T40 completada.
-- [ ] Definition of Done (§2) completa.
+- [x] Definition of Done (§2) completa.
 - [ ] Revisión con humano antes de aprobar el merge.
 
 ## 7. Puertas de principio (verificación ejecutable)
@@ -1147,7 +1156,9 @@ es no-root; el compose elimina la superficie restante del contenedor.
 - [x] T39 — completada (2026-11-05)
 - [x] T40 — completada (2026-11-05); coherencia README/Dockerfile/plan/todo sobre
   el estado actual. Revisar el README si T41 documenta el hardening del compose.
-- [ ] T41 — pendiente
+- [x] T41 — completada (2026-11-05); hardening del servicio `app` verificado con
+  `docker inspect` en las cinco réplicas y smoke real sin `tmpfs`. README
+  actualizado con el contrato de despliegue.
 
 ## 10. Fuera de alcance (YAGNI / backlog)
 
@@ -1184,9 +1195,11 @@ Se registran para que no se reabran sin decisión explícita:
    deja de prometer UUID y el tooling que auto-detecta UUIDs no lo verá.
 3. **Hardening de compose:** **entra en este RC** (D7, T41).
 
-**Abierta:**
+**Resueltas durante la ejecución:**
 
-1. ¿Quién ejecuta el gate Docker del Checkpoint K (requiere acceso a registry)?
+1. Gate Docker del Checkpoint K: ejecutado en local el 2026-11-05 con los
+   builds `test`/`runtime`, `docker compose config`, smoke real e `inspect`
+   sobre las cinco réplicas (T41).
 
 ## 12. Plan adicional — frontera de configuración
 

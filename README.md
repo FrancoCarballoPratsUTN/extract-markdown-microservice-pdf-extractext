@@ -56,6 +56,14 @@ porque `pdf_oxide` requiere símbolos `glibc` hasta `GLIBC_2.35` y `gcompat`
 no permite cargar la biblioteca nativa. Las sondas externas pueden consultar
 `/healthz` y el proceso mantiene `USER 65532:65532`.
 
+El `docker-compose.yml` declara el mismo contrato en el despliegue del servicio
+`app`: `read_only: true`, `cap_drop: ["ALL"]` y
+`security_opt: ["no-new-privileges:true"]`. El servidor no escribe en disco ni
+necesita capacidades, así que no se añade `tmpfs` (la extracción real con PDF se
+verificó con el rootfs en sólo lectura). Traefik queda fuera porque monta el
+socket de Docker. Se comprueba con `docker inspect` (`ReadonlyRootfs`,
+`CapDrop`, `SecurityOpt`).
+
 Para usar una instancia existente de Traefik:
 
 ```bash

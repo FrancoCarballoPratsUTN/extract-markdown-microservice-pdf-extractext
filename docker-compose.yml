@@ -18,6 +18,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # El runtime distroless ya es no-root y no escribe en disco; se declara el
+    # contrato mínimo en el despliegue además de en la imagen. No se añade
+    # almacenamiento efímero adicional salvo que el smoke lo exija.
+    read_only: true
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     deploy:
       replicas: 5
       resources:
