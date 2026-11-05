@@ -706,30 +706,30 @@ configuración nueva), **YAGNI** (no se añade un flag para el allowance).
 
 ---
 
-### [ ] T34 — Contrato de tags de Consul: helper + documentación
+### [x] T34 — Contrato de tags de Consul: helper + documentación
 
 **Descripción:** el PR deja de aceptar `,` como separador. Es un cambio
 incompatible y hoy solo está explicado en un comentario de código. Se extrae la
 función, se cubre con tabla de casos y se documenta el contrato y la migración.
 
 **Acceptance criteria:**
-- [ ] `splitServiceTags(raw string) []string` extraída de `serviceRegistration`,
+- [x] `splitServiceTags(raw string) []string` extraída de `serviceRegistration`,
   con doc comment que explica por qué la coma **no** es separador.
-- [ ] `TestSplitServiceTags` (tabla) cubre: `""` → `nil`; `"metrics"` →
+- [x] `TestSplitServiceTags` (tabla) cubre: `""` → `nil`; `"metrics"` →
   `["metrics"]`; `"a,b"` → `["a,b"]`; `"a;b"` → `["a","b"]`; `" a ; ; b "` →
   `["a","b"]`; `"a;b,c"` → `["a","b,c"]`.
-- [ ] `TestServiceRegistrationPreservesCommasInsideTags` sigue verde sin
+- [x] `TestServiceRegistrationPreservesCommasInsideTags` sigue verde sin
   cambios (es el test de contrato del composition root).
-- [ ] `README.md` documenta `CONSUL_SERVICE_TAGS` (separador `;`, la coma es
+- [x] `README.md` documenta `CONSUL_SERVICE_TAGS` (separador `;`, la coma es
   parte del valor) y, si ya existen en el código, el resto de `CONSUL_*`.
-- [ ] Tras `RegisterService` con éxito, `main.go` emite **un log de arranque con
+- [x] Tras `RegisterService` con éxito, `main.go` emite **un log de arranque con
   los tags efectivos** (`"registered in Consul"` o similar, atributo `tags`,
   nivel `info`) para que un operador detecte en el primer arranque si una config
   con comas se degradó a un único tag. El log usa el logger ya construido, no
   `fmt.Print*`.
-- [ ] `TestServiceRegistrationLogsTheEffectiveTags` verifica que el log contiene
+- [x] `TestServiceRegistrationLogsTheEffectiveTags` verifica que el log contiene
   los tags **después** del split (no el valor crudo de la variable).
-- [ ] Nota de release en este plan, redactada como contrato operativo:
+- [x] Nota de release en este plan, redactada como contrato operativo:
   *"`CONSUL_SERVICE_TAGS` usa `;` como separador desde este release. La coma se
   conserva dentro de un tag (necesario para `security-headers@file,extract-cb@file`
   de Traefik). Si tu entorno usaba comas como separador, migra a `;`: tras
@@ -737,11 +737,11 @@ función, se cubre con tabla de casos y se documenta el contrato y la migración
   tags efectivos."* **No** se hace fail-fast: un tag con comas y sin `;` es
   válido y no se puede distinguir de una config antigua (decisión del usuario:
   no hay inventario de entornos).
-- [ ] No se añade configuración ni dependencia (YAGNI).
+- [x] No se añade configuración ni dependencia (YAGNI).
 
 **Verification:**
-- [ ] RED/GREEN: `CGO_ENABLED=0 go test ./cmd/server -run 'TestSplitServiceTags|TestServiceRegistration'`
-- [ ] `make test`.
+- [x] RED/GREEN: `CGO_ENABLED=0 go test ./cmd/server -run 'TestSplitServiceTags|TestServiceRegistration'`
+- [x] `make test`.
 
 **Dependencies:** ninguna.
 **Files likely touched:** `cmd/server/main.go`, `cmd/server/main_test.go`,
@@ -1129,7 +1129,7 @@ es no-root; el compose elimina la superficie restante del contenedor.
 ## 9. Estado de ejecución
 
 - [x] T33 — completada (2026-11-04); `docker build --target test .` verde
-- [ ] T34 — pendiente
+- [x] T34 — completada (2026-11-04); helper, log efectivo, README y nota de release
 - [ ] T35 — pendiente
 - [ ] T36 — pendiente
 - [ ] T37 — pendiente

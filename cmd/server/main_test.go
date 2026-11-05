@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strconv"
@@ -220,5 +221,62 @@ func TestServiceRegistrationPreservesCommasInsideTags(t *testing.T) {
 	}
 	if !reflect.DeepEqual(registration.Tags, want) {
 		t.Fatalf("tags = %#v, want %#v", registration.Tags, want)
+	}
+}
+
+func TestSplitServiceTags(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want []string
+	}{
+		{"", nil},
+		{"metrics", []string{"metrics"}},
+		{"a,b", []string{"a,b"}},
+		{"a;b", []string{"a", "b"}},
+		{" a ; ; b ", []string{"a", "b"}},
+		{"a;b,c", []string{"a", "b,c"}},
+	}
+	for _, tt := range tests {
+		if got := splitServiceTags(tt.raw); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("splitServiceTags(%q) = %#v, want %#v", tt.raw, got, tt.want)
+		}
+	}
+}
+
+func TestServiceRegistrationLogsTheEffectiveTags(t *testing.T) {
+	var output bytes.Buffer
+	logger := logging.NewWithOptions(logging.Options{Level: slog.LevelDebug, Output: &output})
+	consulServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer consulServer.Close()
+
+	t.Setenv("CONSUL_ENABLED", "true")
+	t.Setenv("CONSUL_HTTP_ADDR", consulServer.URL)
+	t.Setenv("CONSUL_HTTP_TOKEN", "token")
+	t.Setenv("CONSUL_SERVICE_ID", "extract-test")
+	t.Setenv("CONSUL_SERVICE_TAGS", "security-headers@file,extract-cb@file;metrics")
+
+	cfg := testConfig()
+	cfg.Port = freePort(t)
+	stopCh := make(chan os.Signal, 1)
+	result := make(chan error, 1)
+	go func() {
+		result <- serve(context.Background(), logger, cfg, &fakeExtractor{}, stopCh)
+	}()
+
+	waitForServer(t, cfg.Port)
+	stopCh <- syscall.SIGTERM
+	if err := <-result; err != nil {
+		t.Fatalf("serve() error = %v, want nil", err)
+	}
+
+	logs := output.String()
+	if !strings.Contains(logs, `"msg":"registered in Consul"`) {
+		t.Fatalf("logs = %s, want Consul registration log", logs)
+	}
+	if !strings.Contains(logs, "security-headers@file,extract-cb@file") ||
+		!strings.Contains(logs, "metrics") {
+		t.Errorf("logs = %s, want effective split tags", logs)
 	}
 }

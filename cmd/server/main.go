@@ -115,6 +115,7 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, extracto
 		if err := consulClient.RegisterService(registration); err != nil {
 			return err
 		}
+		logger.Info("registered in Consul", "service_id", registration.ID, "tags", registration.Tags)
 		deregistered := false
 		deregister = func() {
 			if deregistered {
@@ -222,15 +223,7 @@ func serviceRegistration(cfg config.Config) (*consul.KVClient, consul.ServiceReg
 	if check == "" {
 		check = "http://" + address + ":" + cfg.Port + "/healthz"
 	}
-	var tags []string
-	// Separador de tags: ';'. Las comas son parte del valor (p. ej. la lista de
-	// middlewares de Traefik: "security-headers@file,extract-cb@file"), por lo
-	// que NO deben usarse como separador.
-	for _, tag := range strings.Split(os.Getenv("CONSUL_SERVICE_TAGS"), ";") {
-		if tag = strings.TrimSpace(tag); tag != "" {
-			tags = append(tags, tag)
-		}
-	}
+	tags := splitServiceTags(os.Getenv("CONSUL_SERVICE_TAGS"))
 	client, err := consul.NewKVClientWithCA(
 		os.Getenv("CONSUL_HTTP_ADDR"),
 		os.Getenv("CONSUL_HTTP_TOKEN"),
@@ -242,6 +235,18 @@ func serviceRegistration(cfg config.Config) (*consul.KVClient, consul.ServiceReg
 	return client, consul.ServiceRegistration{
 		ID: id, Name: name, Address: address, Port: port, Check: check, Tags: tags,
 	}, nil
+}
+
+// splitServiceTags separates Consul tags on semicolons. Commas remain part of
+// a tag because Traefik middleware chains use commas internally.
+func splitServiceTags(raw string) []string {
+	var tags []string
+	for _, tag := range strings.Split(raw, ";") {
+		if tag = strings.TrimSpace(tag); tag != "" {
+			tags = append(tags, tag)
+		}
+	}
+	return tags
 }
 
 // buildExtractor wires the pdf_oxide-backed extractor and proves the native

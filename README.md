@@ -103,6 +103,16 @@ go test -tags integration ./...
 | `LOG_LEVEL` | `info` | Nivel mínimo: `debug`, `info`, `warn` o `error` |
 | `LOG_FORMAT` | `json` | Formato de los logs: `json` o `text` |
 | `PDF_OXIDE_LIB_PATH` | — | Ruta de `libpdf_oxide.so` (obligatoria) |
+| `CONSUL_ENABLED` | `false` | Habilita el registro y la carga de configuración desde Consul |
+| `CONSUL_HTTP_ADDR` | — | URL HTTP del agente Consul |
+| `CONSUL_HTTP_TOKEN` | — | Token del agente Consul |
+| `CONSUL_HTTP_CA_FILE` | — | CA PEM opcional para validar Consul por TLS |
+| `CONSUL_KV_PREFIX` | — | Prefijo KV de configuración, obligatorio con Consul habilitado |
+| `CONSUL_SERVICE_ADDRESS` | hostname | Dirección anunciada del servicio |
+| `CONSUL_SERVICE_NAME` | `extract` | Nombre del servicio registrado |
+| `CONSUL_SERVICE_ID` | `extract-<address>` | ID del registro |
+| `CONSUL_SERVICE_CHECK_URL` | `http://<address>:<port>/healthz` | URL del check HTTP |
+| `CONSUL_SERVICE_TAGS` | — | Tags separados por `;`; las comas forman parte del tag |
 
 Los defaults de la tabla son los del archivo Compose (despliegue recomendado);
 si una variable no llega, `internal/config` aplica sus propios defaults
@@ -113,6 +123,14 @@ valor inválido. `LOG_LEVEL`/`LOG_FORMAT` los lee `internal/logging` y también 
 `MAX_WORKERS` se ajusta a la cuota de CPU de cada réplica. Con la configuración
 del archivo Compose, dos trabajadores superan a uno y cuatro en rendimiento.
 La admisión máxima por réplica es `MAX_WORKERS + QUEUE_SIZE`.
+
+Cuando `CONSUL_ENABLED=true`, `CONSUL_HTTP_ADDR`, `CONSUL_HTTP_TOKEN` y
+`CONSUL_KV_PREFIX` son obligatorios. `CONSUL_SERVICE_TAGS` usa `;` como único
+separador: por ejemplo,
+`security-headers@file,extract-cb@file;metrics` produce dos tags, y la coma
+del primer tag se conserva. Si un entorno usaba comas para separar tags, debe
+migrar a `;` y revisar el log de arranque `"registered in Consul"` con el
+atributo `tags` para confirmar los tags efectivos.
 
 ## Logging
 
