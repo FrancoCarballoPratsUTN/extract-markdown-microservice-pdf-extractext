@@ -40,8 +40,9 @@ negocio puede probarse sin depender de HTTP ni del motor de PDF.
 
 La imagen Docker usa varias etapas: instala `libpdf_oxide` con el installer
 pineado, compila el servidor (`CGO_ENABLED=0`), ejecuta las pruebas con la
-librería real y construye una imagen final mínima sobre `bookworm-slim` con un
-usuario sin privilegios.
+librería real y construye una imagen final mínima sobre
+`gcr.io/distroless/base-debian13` (digest fijado), sin shell, con
+`USER 65532:65532` y sin `HEALTHCHECK` interno.
 
 ```bash
 docker compose up --build

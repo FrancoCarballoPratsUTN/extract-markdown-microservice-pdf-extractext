@@ -324,9 +324,12 @@ Detalle de cada tarea en `tasks/todo-markdown.md` (Parte 2).
 
 ## 15. Cierre simple de runtime y CVE
 
-El runtime usa `gcr.io/distroless/cc-debian12:nonroot`, sin shell, gestor de
-paquetes ni `wget`. Se eliminó el `HEALTHCHECK` interno basado en BusyBox; las
-sondas externas, Traefik y Consul continúan consultando `/healthz`.
+El runtime usa `gcr.io/distroless/base-debian13`, fijada al digest
+`sha256:9039a88709bcc2bacf5a2faac331d65dd6840f763f225ad9594cc0c67bcd0fba`, sin
+shell, gestor de paquetes ni `wget`. La imagen declara `USER 65532:65532`, que
+es la garantía efectiva de ejecución no privilegiada. Se eliminó el
+`HEALTHCHECK` interno basado en BusyBox; las sondas externas, Traefik y Consul
+continúan consultando `/healthz`.
 
 La configuración de negocio y límites permanece en `internal/config`. Las
 variables de Consul que sólo usa el composition root pueden leerse ahí en
@@ -376,7 +379,8 @@ alterar el contrato funcional del extractor:
 - El overhead multipart forma parte del límite total; el handler debe reservar
   el límite configurado para la request completa y conservar el límite propio
   del PDF.
-- No se cambia la imagen base ni se añade tooling adicional en esta fase.
+- No se añade tooling adicional en esta fase; la evolución de la imagen base se
+  documenta en la Parte 5.
 - No se modifica la documentación histórica de `tasks/plan.md`/`tasks/todo.md`.
 
 ## Estado de ejecución
@@ -402,7 +406,8 @@ no tratar el identificador como una credencial.
 ## Decisiones de diseño
 
 - Se usará el header `X-Request-ID` existente como contrato de entrada y salida.
-- Un header ausente o inválido recibirá un UUID generado por el servicio.
+- Un header ausente o inválido recibirá un identificador opaco generado por el
+  servicio (`crypto/rand.Text()`, 26 caracteres base32).
 - El valor será validado y acotado antes de entrar al contexto o a los logs.
 - El middleware de request ID se ejecutará antes de recovery y access logging.
 - El worker pool copiará el ID al `job`, porque el extractor se ejecuta con
@@ -459,15 +464,17 @@ log.
 
 ## Parte 5 — Runtime Distroless
 
-Se reemplazó `debian:bookworm-slim` por
+Se reemplazó `debian:bookworm-slim` por `gcr.io/distroless/base-debian13`,
+fijada al digest
+`sha256:9039a88709bcc2bacf5a2faac331d65dd6840f763f225ad9594cc0c67bcd0fba`.
 Se evaluó Alpine `3.24.3` (digest
 `sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9`),
 pero fue descartada: aunque compila, el runtime falla al cargar `pdf_oxide`
 porque la biblioteca requiere símbolos `glibc` hasta `GLIBC_2.35` y `gcompat`
 no ofrece compatibilidad suficiente. Se conserva
-`gcr.io/distroless/base-debian13:nonroot`, fijada al digest
-`sha256:9039a88709bcc2bacf5a2faac331d65dd6840f763f225ad9594cc0c67bcd0fba`,
-con sólo `libgcc_s.so.1` añadido, sin `wget` ni `HEALTHCHECK` interno.
+`gcr.io/distroless/base-debian13`, fijada al mismo digest, con
+`USER 65532:65532` declarado explícitamente y sólo `libgcc_s.so.1` añadido, sin
+`wget` ni `HEALTHCHECK` interno.
 
 La decisión queda cerrada: no se aplica Alpine al runtime mientras
 `pdf_oxide` se distribuya como biblioteca glibc. Mezclar una glibc externa
@@ -936,8 +943,8 @@ duplicados), **DRY** (una tabla para los tres casos inválidos).
 
 ### [x] T39 — Dockerfile consistente y README alineado
 
-**Descripción:** el runtime se cambió de `cc-debian12:nonroot` a
-`base-debian13@digest` + copia manual de `libgcc_s.so.1`. Funciona, pero el pin
+**Descripción:** el runtime se cambió de la imagen Distroless basada en Debian 12
+a `base-debian13@digest` + copia manual de `libgcc_s.so.1`. Funciona, pero el pin
 es inconsistente entre stages, el README afirma `:nonroot` y el `Dockerfile` no
 lo dice, y se eliminaron los comentarios que explican decisiones no obvias.
 
@@ -974,37 +981,40 @@ pin de Go), **Clean Code** (rationale donde no es obvio), **YAGNI** (el cambio a
 
 ---
 
-### [ ] T40 — Coherencia documental del RC
+### [x] T40 — Coherencia documental del RC
 
 **Descripción:** el plan y el todo arrastran contradicciones que son la
-evidencia de release: `cc-debian12` vs `base-debian13`, una frase truncada, un
-riesgo que dice que no se cambia la imagen, y checkpoints sin marcar.
+evidencia de release: la imagen runtime anterior (Debian 12) frente a
+`base-debian13`, una frase truncada, un riesgo que dice que no se cambia la
+imagen, y checkpoints sin marcar.
 
 **Acceptance criteria:**
-- [ ] §15 (`plan-markdown.md:327`) deja de decir `cc-debian12:nonroot`; una sola
-  imagen runtime en todo el documento.
-- [ ] Frase truncada de `plan-markdown.md:462` completada ("Se reemplazó X por Y").
-- [ ] `plan-markdown.md:379` ("No se cambia la imagen base") corregido o eliminado.
-- [ ] `todo-markdown.md:594` (Checkpoint G) marcado o justificado; `T24` cerrada
+- [x] §15 (`plan-markdown.md:327`) deja de nombrar la imagen runtime anterior y
+  usa `base-debian13`; una sola imagen runtime en todo el documento.
+- [x] Frase truncada de `plan-markdown.md:462` completada ("Se reemplazó X por Y").
+- [x] `plan-markdown.md:379` corregido: el riesgo ya no afirma que la imagen base
+  permanece sin cambios.
+- [x] `todo-markdown.md:594` (Checkpoint G) marcado o justificado; `T24` cerrada
   como superada por la Parte 5/6.
-- [ ] `README.md` sin afirmaciones que el `Dockerfile` no respalde.
-- [ ] `README.md` describe `MAX_UPLOAD_MB` como **tope del documento PDF**, no
+- [x] `README.md` sin afirmaciones que el `Dockerfile` no respalde.
+- [x] `README.md` describe `MAX_UPLOAD_MB` como **tope del documento PDF**, no
   del cuerpo: desde T33 el sobre multipart puede ocupar hasta
   `MAX_UPLOAD_MB + 8 KiB` y el PDF sigue acotado por `MAX_UPLOAD_MB`.
-- [ ] Tabla de `CONSUL_*` presente (de T34) y coherente con el código.
-- [ ] `README.md` y `docs/` **no** prometen un UUID para `X-Request-ID`; describen
+- [x] Tabla de `CONSUL_*` presente (de T34) y coherente con el código.
+- [x] `README.md` y `docs/` **no** prometen un UUID para `X-Request-ID`; describen
   el identificador generado como opaco (D6).
-- [ ] `git diff --check` limpio y `grep -n "cc-debian12" tasks/ README.md` sin
-  resultados (salvo mención histórica explícita, si se decide conservarla).
-- [ ] `grep -rni "uuid" README.md docs/ tasks/plan-markdown.md` sin promesas
+- [x] `git diff --check` limpio; no quedan menciones a la imagen runtime anterior
+  (solo `base-debian13`).
+- [x] `grep -rni "uuid" README.md docs/ tasks/plan-markdown.md` sin promesas
   vigentes: solo se admite una mención histórica explícita ("antes se generaba un
   UUIDv4"), nunca como contrato actual.
 
 **Verification:**
-- [ ] `grep -rn "cc-debian12\|No se cambia la imagen base" tasks/ README.md`
-- [ ] `grep -rni "uuid" README.md docs/`
-- [ ] `git diff --check`
-- [ ] Lectura cruzada README ↔ Dockerfile ↔ plan.
+- [x] Revisión cruzada del riesgo de la Parte 3: ya no afirma que la imagen base
+  permanece sin cambios.
+- [x] `grep -rni "uuid" README.md docs/` sin resultados.
+- [x] `git diff --check`
+- [x] Lectura cruzada README ↔ Dockerfile ↔ plan.
 
 **Dependencies:** T33, T34, T39, T41 (describen el estado final).
 **Files likely touched:** `tasks/plan-markdown.md`, `tasks/todo-markdown.md`,
@@ -1089,7 +1099,7 @@ es no-root; el compose elimina la superficie restante del contenedor.
   confirmados con `docker inspect`.
 
 ### Checkpoint Final RC
-- [ ] T40 completada.
+- [x] T40 completada.
 - [ ] Definition of Done (§2) completa.
 - [ ] Revisión con humano antes de aprobar el merge.
 
@@ -1130,12 +1140,13 @@ es no-root; el compose elimina la superficie restante del contenedor.
 
 - [x] T33 — completada (2026-11-04); `docker build --target test .` verde
 - [x] T34 — completada (2026-11-04); helper, log efectivo, README y nota de release
-- [ ] T35 — pendiente
-- [ ] T36 — pendiente
+- [x] T35 — completada (2026-11-05)
+- [x] T36 — completada (2026-11-05)
 - [x] T37 — completada (2026-11-05)
 - [x] T38 — completada (2026-11-05)
 - [x] T39 — completada (2026-11-05)
-- [ ] T40 — pendiente
+- [x] T40 — completada (2026-11-05); coherencia README/Dockerfile/plan/todo sobre
+  el estado actual. Revisar el README si T41 documenta el hardening del compose.
 - [ ] T41 — pendiente
 
 ## 10. Fuera de alcance (YAGNI / backlog)

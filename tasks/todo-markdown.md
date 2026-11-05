@@ -460,17 +460,22 @@ en `srv.Shutdown`. Un segundo `SIGTERM`/`SIGINT` fuerza `os.Exit(1)`. Loguear
 
 ## Fase 5 — Disposición de CVE de BusyBox
 
-### T24: Verificar el paquete BusyBox de la imagen Alpine
+### [x] T24: Verificar el paquete BusyBox de la imagen Alpine
 
-- [ ] Registrar la versión de BusyBox y el resultado del scanner para la imagen
-  runtime construida.
-- [ ] Actualizar BusyBox sólo si hay una versión compatible corregida disponible;
-  conservar Alpine `3.24.3`.
-- [ ] README distingue el `wget` del healthcheck fijo de una corrección de la CVE.
+> **Superada por la Parte 5/6.** El runtime migró a Distroless
+> (`base-debian13`), que no incluye BusyBox, `wget` ni `HEALTHCHECK` interno.
+> La verificación de BusyBox ya no aplica; se conserva como registro histórico.
+
+- [x] Registrar la versión de BusyBox y el resultado del scanner para la imagen
+  runtime construida. *(No aplica: la imagen ya no contiene BusyBox.)*
+- [x] Actualizar BusyBox sólo si hay una versión compatible corregida disponible;
+  conservar Alpine `3.24.3`. *(No aplica: el runtime ya no usa Alpine.)*
+- [x] README distingue el `wget` del healthcheck fijo de una corrección de la CVE.
 
 **Verificación:** construir la imagen runtime y comparar el resultado del scanner
 con la versión del paquete. No hace falta agregar un test de aplicación: no cambia
-el comportamiento HTTP.
+el comportamiento HTTP. *(Sustituida por la verificación de Distroless de la
+Parte 5: build runtime, smoke `/healthz` y usuario `65532:65532`.)*
 **Dependencias:** ninguna. **Scope:** S.
 
 ## Fase 6 — Correcciones del Code Review para producción
@@ -592,9 +597,11 @@ guardarlo en el contexto y devolverlo en la respuesta.
 **Estimated scope:** M
 
 ### Checkpoint G — Propagación HTTP
-- [ ] Tests focalizados verdes.
-- [ ] `make test` verde.
-- [ ] `make build` verde.
+- [x] Tests focalizados verdes.
+- [x] `make test` verde.
+- [x] `make build` verde.
+
+Superado por T31/T32 y el Checkpoint Final de correlación; se marca a posteriori.
 
 ### [x] T31 — Propagar request ID al pipeline (TDD)
 **Descripción:** Copiar el ID al job del worker pool y añadir `request_id` a

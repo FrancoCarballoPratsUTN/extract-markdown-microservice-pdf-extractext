@@ -27,7 +27,7 @@ Los errores usan `application/problem+json` (RFC 9457):
 | Estado | Significado |
 | --- | --- |
 | 400 | Cuerpo vacío, PDF corrupto o tipo de contenido no admitido |
-| 413 | El cuerpo supera `MAX_UPLOAD_MB` o el documento supera `MAX_PAGES` |
+| 413 | El PDF supera `MAX_UPLOAD_MB`, el sobre multipart excede `MAX_UPLOAD_MB` + 8 KiB o el documento supera `MAX_PAGES` |
 | 503 | El control de admisión está saturado |
 | 500 | Fallo de la extracción |
 
@@ -95,7 +95,7 @@ go test -tags integration ./...
 | Variable | Predeterminado | Propósito |
 | --- | --- | --- |
 | `PORT` | `8080` | Puerto de escucha |
-| `MAX_UPLOAD_MB` | `50` | Tamaño máximo del cuerpo |
+| `MAX_UPLOAD_MB` | `50` | Tope del documento PDF; el sobre multipart admite hasta `MAX_UPLOAD_MB` + 8 KiB |
 | `MAX_PAGES` | `1000` | Tope de páginas por documento (`0` = sin límite) |
 | `MAX_WORKERS` | `2` | Extracciones concurrentes por réplica |
 | `QUEUE_SIZE` | `56` | Capacidad de la cola por réplica |
@@ -112,7 +112,7 @@ go test -tags integration ./...
 | `CONSUL_KV_PREFIX` | — | Prefijo KV de configuración, obligatorio con Consul habilitado |
 | `CONSUL_SERVICE_ADDRESS` | hostname | Dirección anunciada del servicio |
 | `CONSUL_SERVICE_NAME` | `extract` | Nombre del servicio registrado |
-| `CONSUL_SERVICE_ID` | `extract-<address>` | ID del registro |
+| `CONSUL_SERVICE_ID` | `<CONSUL_SERVICE_NAME>-<address>` | ID del registro |
 | `CONSUL_SERVICE_CHECK_URL` | `http://<address>:<port>/healthz` | URL del check HTTP |
 | `CONSUL_SERVICE_TAGS` | — | Tags separados por `;`; las comas forman parte del tag |
 
@@ -121,6 +121,11 @@ si una variable no llega, `internal/config` aplica sus propios defaults
 (`MAX_WORKERS=10`, `QUEUE_SIZE=16`, el resto igual) y aborta el arranque ante un
 valor inválido. `LOG_LEVEL`/`LOG_FORMAT` los lee `internal/logging` y también son
 *fail-fast*: un valor desconocido impide el arranque.
+
+`MAX_UPLOAD_MB` limita el documento PDF, no el sobre de la petición: en
+`multipart/form-data` el cuerpo completo puede ocupar hasta `MAX_UPLOAD_MB` +
+8 KiB (boundaries y cabeceras), pero la parte `file` sigue acotada por
+`MAX_UPLOAD_MB`.
 
 `MAX_WORKERS` se ajusta a la cuota de CPU de cada réplica. Con la configuración
 del archivo Compose, dos trabajadores superan a uno y cuatro en rendimiento.
