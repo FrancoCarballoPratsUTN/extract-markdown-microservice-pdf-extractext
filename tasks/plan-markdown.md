@@ -897,30 +897,30 @@ cumple.
 
 ---
 
-### [ ] T38 — Tests residuales de correlación
+### [x] T38 — Tests residuales de correlación
 
 **Descripción:** cubrir las ramas nuevas que hoy no se ejecutan y el AC de T30
 que no tiene test ("un ID inválido no se propaga ni se registra").
 
 **Acceptance criteria:**
-- [ ] `TestWithRequestIDReplacesAnInvalidHeader` (tabla): `"bad id"` (espacio),
+- [x] `TestWithRequestIDReplacesAnInvalidHeader` (tabla): `"bad id"` (espacio),
   `"a\nb"` (control), 129 caracteres. En los tres: el header de respuesta es un
   ID generado, el contexto no conserva el valor inválido y el valor crudo **no**
   aparece en los logs.
-- [ ] `TestWorkerPoolLogsTheRequestIDWhenTheQueueIsFull` cubre la rama con ID de
+- [x] `TestWorkerPoolLogsTheRequestIDWhenTheQueueIsFull` cubre la rama con ID de
   `logRejection` (hoy `logRejection` está al 80%).
-- [ ] `TestQueuedExtractorLogsTheRequestIDWhenTheRequestIsAbandoned` cubre la
+- [x] `TestQueuedExtractorLogsTheRequestIDWhenTheRequestIsAbandoned` cubre la
   rama con ID de `queued_extractor.go` (hoy sin test: `grep abandoned` en tests
   devuelve 0).
-- [ ] `go tool cover -func` confirma que las ramas nuevas de `middleware.go`,
+- [x] `go tool cover -func` confirma que las ramas nuevas de `middleware.go`,
   `workerpool.go`, `queued_extractor.go` y `payload.go` quedan ejecutadas.
-- [ ] No se duplica el helper de tests existente (`newRecordingLogger`,
+- [x] No se duplica el helper de tests existente (`newRecordingLogger`,
   `decodeLogLine`): se reutiliza.
 
 **Verification:**
-- [ ] `CGO_ENABLED=0 go test ./internal/presentation/http ./internal/usecase`
-- [ ] `CGO_ENABLED=0 go test -coverprofile=/tmp/cover.out ./internal/... && CGO_ENABLED=0 go tool cover -func=/tmp/cover.out | grep -E 'middleware|workerpool|queued|payload'`
-- [ ] `make test`.
+- [x] `CGO_ENABLED=0 go test ./internal/presentation/http ./internal/usecase`
+- [x] `CGO_ENABLED=0 go test -coverprofile=/tmp/cover.out ./internal/... && CGO_ENABLED=0 go tool cover -func=/tmp/cover.out | grep -E 'middleware|workerpool|queued|payload'`
+- [x] `make test`.
 
 **Dependencies:** T36, T37.
 **Files likely touched:**
@@ -1133,7 +1133,7 @@ es no-root; el compose elimina la superficie restante del contenedor.
 - [ ] T35 — pendiente
 - [ ] T36 — pendiente
 - [ ] T37 — pendiente
-- [ ] T38 — pendiente
+- [x] T38 — completada (2026-11-05)
 - [ ] T39 — pendiente
 - [ ] T40 — pendiente
 - [ ] T41 — pendiente

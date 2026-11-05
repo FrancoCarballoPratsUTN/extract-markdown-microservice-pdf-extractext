@@ -1,13 +1,17 @@
 package usecase
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/reqctx"
 )
 
 func TestQueuedExtractorReturnsTheExtractedDocument(t *testing.T) {
@@ -109,7 +113,29 @@ func TestQueuedExtractorReportsAnExpiredDeadlineAsServiceUnavailable(t *testing.
 	if !errors.Is(err, domain.ErrServiceUnavailable) {
 		t.Fatalf("err = %v, want ErrServiceUnavailable", err)
 	}
+
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("Extract blocked for %v, want it to give up on the deadline", elapsed)
+	}
+}
+
+func TestQueuedExtractorLogsTheRequestIDWhenTheRequestIsAbandoned(t *testing.T) {
+	var output bytes.Buffer
+	gate := make(chan struct{})
+	logger := logging.NewWithOptions(logging.Options{Level: slog.LevelDebug, Output: &output})
+	wp := NewWorkerPool(&gatedExtractor{gate: gate}, 1, 4, 1<<20, logger)
+	t.Cleanup(wp.Close)
+	t.Cleanup(func() { close(gate) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	ctx = reqctx.WithRequestID(ctx, "orchestrator-123")
+
+	_, err := NewQueuedExtractor(wp, logger).Extract(ctx, []byte("pdf"))
+	if !errors.Is(err, domain.ErrServiceUnavailable) {
+		t.Fatalf("err = %v, want ErrServiceUnavailable", err)
+	}
+	if !strings.Contains(output.String(), `"request_id":"orchestrator-123"`) {
+		t.Fatalf("abandoned extraction log missing request ID: %s", output.String())
 	}
 }

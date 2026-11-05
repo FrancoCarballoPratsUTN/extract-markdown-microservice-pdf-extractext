@@ -66,6 +66,7 @@ func TestWorkerPoolLogsAWarningWhenTheQueueIsFull(t *testing.T) {
 	if _, err := wp.Submit(ctx, []byte("a")); err != nil {
 		t.Fatalf("first submit: %v", err)
 	}
+
 	// Let the worker pick the first job up so the second one lands in the
 	// queue buffer and the third one finds it full.
 	time.Sleep(10 * time.Millisecond)
@@ -81,5 +82,33 @@ func TestWorkerPoolLogsAWarningWhenTheQueueIsFull(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "ERROR") {
 		t.Errorf("a rejected job was logged as an error: %s", output.String())
+	}
+}
+
+func TestWorkerPoolLogsTheRequestIDWhenTheQueueIsFull(t *testing.T) {
+	var output bytes.Buffer
+	logger := logging.NewWithOptions(logging.Options{Level: slog.LevelDebug, Output: &output})
+
+	gate := make(chan struct{})
+	wp := NewWorkerPool(&gatedExtractor{gate: gate}, 1, 1, 1<<20, logger)
+	defer func() {
+		close(gate)
+		wp.Close()
+	}()
+
+	ctx := reqctx.WithRequestID(context.Background(), "orchestrator-123")
+	if _, err := wp.Submit(ctx, []byte("a")); err != nil {
+		t.Fatalf("first submit: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if _, err := wp.Submit(ctx, []byte("b")); err != nil {
+		t.Fatalf("second submit: %v", err)
+	}
+	if _, err := wp.Submit(ctx, []byte("c")); err == nil {
+		t.Fatal("the third submit was accepted, want the queue to be full")
+	}
+
+	if !strings.Contains(output.String(), `"request_id":"orchestrator-123"`) {
+		t.Fatalf("queue rejection log missing request ID: %s", output.String())
 	}
 }

@@ -60,6 +60,35 @@ func TestWithRequestIDPreservesOrGeneratesResponseHeader(t *testing.T) {
 	}
 }
 
+func TestWithRequestIDReplacesAnInvalidHeader(t *testing.T) {
+	tests := []string{"bad id", "a\nb", strings.Repeat("x", 129)}
+
+	for _, invalidHeader := range tests {
+		t.Run(invalidHeader, func(t *testing.T) {
+			var output bytes.Buffer
+			logger := newRecordingLogger(&output)
+			handler := withRequestID(withRequestLog(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := reqctx.RequestID(r.Context()); got == invalidHeader || !reqctx.IsValid(got) {
+					t.Fatalf("context request ID = %q, want a valid replacement", got)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			})))
+			request := httptest.NewRequest(http.MethodGet, "/extract", nil)
+			request.Header.Set("X-Request-ID", invalidHeader)
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if got := response.Header().Get("X-Request-ID"); got == invalidHeader || !reqctx.IsValid(got) {
+				t.Fatalf("response request ID = %q, want a valid replacement", got)
+			}
+			if strings.Contains(output.String(), invalidHeader) {
+				t.Fatalf("logs contain the invalid request ID %q: %s", invalidHeader, output.String())
+			}
+		})
+	}
+}
+
 func TestRoutesCorrelatesRequestIDInResponseAndAccessLog(t *testing.T) {
 	var output bytes.Buffer
 	handler := Routes(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
