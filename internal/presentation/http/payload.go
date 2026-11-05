@@ -5,10 +5,18 @@ import (
 	"errors"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
 )
 
-const pdfFormField = "file"
+const (
+	pdfFormField = "file"
+
+	// multipartOverheadAllowance covers boundaries, part headers and the
+	// closing delimiter. Without it, a PDF of exactly maxBytes would be
+	// rejected just because of the multipart envelope.
+	multipartOverheadAllowance = 8 << 10
+)
 
 var (
 	ErrMissingFile          = errors.New("missing pdf file")
@@ -30,7 +38,7 @@ func readPDFPayload(r *http.Request, maxBytes int64) ([]byte, error) {
 
 	switch mediaType {
 	case "multipart/form-data":
-		return readMultipartPDF(r, maxBytes)
+		return readMultipartPDF(r, maxBytes, maxBytes+multipartOverheadAllowance)
 	case "application/pdf", "application/octet-stream":
 		return readLimited(r.Body, maxBytes)
 	default:
@@ -38,13 +46,32 @@ func readPDFPayload(r *http.Request, maxBytes int64) ([]byte, error) {
 	}
 }
 
-func readMultipartPDF(r *http.Request, maxBytes int64) ([]byte, error) {
-	r.Body = http.MaxBytesReader(nil, r.Body, maxBytes)
+// readMultipartPDF extracts the "file" part, bounded by maxPartBytes, and
+// requires the whole body to fit in maxBodyBytes. The body cap is larger
+// because the multipart envelope (boundaries and part headers) is not part of
+// the document.
+func readMultipartPDF(r *http.Request, maxPartBytes, maxBodyBytes int64) ([]byte, error) {
+	// nil is safe: MaxBytesReader only type-asserts the writer to flag the
+	// connection to net/http. The 413 is written by the handler.
+	r.Body = http.MaxBytesReader(nil, r.Body, maxBodyBytes)
+
 	reader, err := r.MultipartReader()
 	if err != nil {
 		return nil, ErrMissingFile
 	}
+	data, err := readFilePart(reader, maxPartBytes)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureBodyConsumed(r.Body); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
 
+// readFilePart returns the bytes of the first part named "file" that carries a
+// filename. Other parts are skipped.
+func readFilePart(reader *multipart.Reader, maxPartBytes int64) ([]byte, error) {
 	for {
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
@@ -62,19 +89,22 @@ func readMultipartPDF(r *http.Request, maxBytes int64) ([]byte, error) {
 			continue
 		}
 
-		data, err := readLimited(part, maxBytes)
+		data, err := readLimited(part, maxPartBytes)
 		_ = part.Close()
-		if err != nil {
-			return nil, err
-		}
-		if _, err := io.Copy(io.Discard, r.Body); err != nil {
-			if isPayloadTooLarge(err) {
-				return nil, ErrPayloadTooLarge
-			}
-			return nil, ErrUnreadableBody
-		}
-		return data, nil
+		return data, err
 	}
+}
+
+// ensureBodyConsumed drains the rest of the request so an oversized body is
+// reported as such instead of being silently ignored.
+func ensureBodyConsumed(body io.Reader) error {
+	if _, err := io.Copy(io.Discard, body); err != nil {
+		if isPayloadTooLarge(err) {
+			return ErrPayloadTooLarge
+		}
+		return ErrUnreadableBody
+	}
+	return nil
 }
 
 func isPayloadTooLarge(err error) bool {

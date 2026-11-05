@@ -595,7 +595,7 @@ T40 (docs)     ◄── depende del estado final de T33…T41 ─────�
 
 ## 5. Tareas
 
-### [ ] T33 — Límites de payload explícitos (parte vs cuerpo)
+### [x] T33 — Límites de payload explícitos (parte vs cuerpo)
 
 **Descripción:** hoy `readMultipartPDF` aplica el mismo `maxBytes` al cuerpo
 completo y a la parte PDF, así que un PDF de exactamente `MAX_UPLOAD_MB` pasa
@@ -603,27 +603,32 @@ como `application/pdf` y falla como `multipart/form-data`. Se separan los dos
 topes y se aprovecha para dividir la función en dos responsabilidades (H8).
 
 **Acceptance criteria:**
-- [ ] RED: `TestReadPDFPayloadAcceptsMultipartPDFExactlyAtTheLimit` falla con el
+- [x] RED: `TestReadPDFPayloadAcceptsMultipartPDFExactlyAtTheLimit` falla con el
   código actual (hoy devuelve `ErrPayloadTooLarge`).
-- [ ] `readPDFPayload` pasa `maxPartBytes = maxBytes` y
+- [x] `readPDFPayload` pasa `maxPartBytes = maxBytes` y
   `maxBodyBytes = maxBytes + multipartOverheadAllowance`.
-- [ ] `readMultipartPDF(r, maxPartBytes, maxBodyBytes)` documenta qué acota cada
+- [x] `readMultipartPDF(r, maxPartBytes, maxBodyBytes)` documenta qué acota cada
   parámetro y por qué `http.MaxBytesReader(nil, …)` es seguro (comentario).
-- [ ] `TestReadPDFPayloadRejectsMultipartPDFAboveTheLimit` (PDF = `maxBytes+1`)
+- [x] `TestReadPDFPayloadRejectsMultipartPDFAboveTheLimit` (PDF = `maxBytes+1`)
   devuelve `ErrPayloadTooLarge` por el límite **de parte**.
-- [ ] `TestReadPDFPayloadRejectsMultipartBodyAboveTheLimit` (campo no-`file` de
-  `multipartOverheadAllowance+1` con `maxBytes` pequeño) devuelve
-  `ErrPayloadTooLarge` por el límite **de cuerpo**.
-- [ ] Se **reescribe** `TestReadPDFPayloadRejectsMultipartBodyExceedingMaxBytes`:
+- [x] `TestReadPDFPayloadRejectsMultipartBodyAboveTheLimit` (campo no-`file`
+  posterior al documento que hace que el cuerpo supere `maxBytes+allowance`)
+  devuelve `ErrPayloadTooLarge` por el límite **de cuerpo** (drain).
+- [x] `TestReadPDFPayloadRejectsMultipartBodyAboveTheLimitBeforeTheFile` cubre el
+  mismo tope cuando el exceso se detecta en `NextPart` (campo gigante antes del
+  documento) y no debe degradarse a `ErrMissingFile`.
+- [x] Se **reescribe** `TestReadPDFPayloadRejectsMultipartBodyExceedingMaxBytes`:
   su supuesto (un cuerpo de ~200 B con `maxBytes=32` excede el tope) deja de ser
-  cierto al añadir el allowance. El nuevo test debe atacar el tope de cuerpo,
-  no el de parte.
-- [ ] `TestReadPDFPayloadReportsATruncatedMultipartBody` (drain con reader roto)
-  devuelve `ErrUnreadableBody` (rama hoy sin cubrir).
-- [ ] SRP: `readFilePart(reader, maxPartBytes)` y
+  cierto al añadir el allowance. El nuevo test ataca el tope de cuerpo, no el de
+  parte.
+- [x] `TestReadPDFPayloadReportsATruncatedMultipartBody` (drain con reader roto)
+  devuelve `ErrUnreadableBody`.
+- [x] SRP: `readFilePart(reader, maxPartBytes)` y
   `ensureBodyConsumed(body)` tienen una sola razón de cambio y ≤ 20 líneas cada
   una; `readMultipartPDF` queda ≤ 15 líneas como orquestador.
-- [ ] No se añade ninguna variable de entorno ni parámetro configurable (YAGNI).
+- [x] No se añade ninguna variable de entorno ni parámetro configurable (YAGNI).
+- [x] Cobertura medida: todas las funciones de `payload.go` al 100%
+  (`go tool cover -func`).
 
 **Refactor de referencia:**
 ```go
@@ -665,9 +670,29 @@ func readMultipartPDF(r *http.Request, maxPartBytes, maxBodyBytes int64) ([]byte
 ```
 
 **Verification:**
-- [ ] RED/GREEN: `CGO_ENABLED=0 go test ./internal/presentation/http -run 'TestReadPDFPayload'`
-- [ ] Handler: `CGO_ENABLED=0 go test -tags unit ./internal/presentation/http -run 'TestExtractHandler'`
-- [ ] `make test` y `make build`.
+- [x] RED/GREEN: `CGO_ENABLED=0 go test ./internal/presentation/http -run 'TestReadPDFPayload'`
+- [x] Handler: `CGO_ENABLED=0 go test -tags unit ./internal/presentation/http -run 'TestExtractHandler'`
+- [x] `make test` y `make build`.
+- [x] `make test-unit` (un fallo intermitente previo de `TestServeAnswersTheHealthProbe`
+  en `cmd/server` desapareció al re-ejecutar; no toca `presentation/http`).
+- [x] `gofmt -l .` sin salida y `git diff --check` limpio.
+- [x] `docker build --target test .` verde (vet + tests + unit-tagged +
+  integration dentro de la imagen).
+
+**Resultado (2026-11-04):**
+- Implementado con los dos topes (`maxPartBytes = maxBytes`,
+  `maxBodyBytes = maxBytes + 8 KiB`) y las tres funciones
+  `readMultipartPDF` / `readFilePart` / `ensureBodyConsumed`.
+- El RED descubrió un **bug adicional**: un PDF multipart por encima del límite
+  devolvía `ErrUnreadableBody` (400 "could not read request body") en vez de
+  `ErrPayloadTooLarge` (413). Queda cubierto por
+  `TestExtractHandlerMultipartPDFAboveTheLimitReturns413`.
+- La rama `isPayloadTooLarge` que se añadió a `readLimited` se **eliminó** por
+  inalcanzable: con `maxPartBytes+1 < maxBodyBytes` el `MaxBytesReader` del
+  cuerpo no puede dispararse leyendo la parte. No se deja código muerto.
+- Tests añadidos: frontera (PDF == límite, payload y handler), tope de parte,
+  tope de cuerpo por drain y por `NextPart`, drain truncado, `Content-Type`
+  malformado y multipart sin boundary.
 
 **Dependencies:** ninguna.
 **Files likely touched:** `internal/presentation/http/payload.go`,
@@ -963,6 +988,9 @@ riesgo que dice que no se cambia la imagen, y checkpoints sin marcar.
 - [ ] `todo-markdown.md:594` (Checkpoint G) marcado o justificado; `T24` cerrada
   como superada por la Parte 5/6.
 - [ ] `README.md` sin afirmaciones que el `Dockerfile` no respalde.
+- [ ] `README.md` describe `MAX_UPLOAD_MB` como **tope del documento PDF**, no
+  del cuerpo: desde T33 el sobre multipart puede ocupar hasta
+  `MAX_UPLOAD_MB + 8 KiB` y el PDF sigue acotado por `MAX_UPLOAD_MB`.
 - [ ] Tabla de `CONSUL_*` presente (de T34) y coherente con el código.
 - [ ] `README.md` y `docs/` **no** prometen un UUID para `X-Request-ID`; describen
   el identificador generado como opaco (D6).
@@ -1100,7 +1128,7 @@ es no-root; el compose elimina la superficie restante del contenedor.
 
 ## 9. Estado de ejecución
 
-- [ ] T33 — pendiente
+- [x] T33 — completada (2026-11-04); `docker build --target test .` verde
 - [ ] T34 — pendiente
 - [ ] T35 — pendiente
 - [ ] T36 — pendiente
@@ -1148,3 +1176,53 @@ Se registran para que no se reabran sin decisión explícita:
 **Abierta:**
 
 1. ¿Quién ejecuta el gate Docker del Checkpoint K (requiere acceso a registry)?
+
+## 12. Plan adicional — frontera de configuración
+
+### Objetivo
+
+Evitar lecturas directas de `os.Getenv` en `cmd/server/main.go`. `main` debe
+actuar como composition root: recibir configuración ya resuelta y construir
+clientes y servicios, sin defaults, trims ni validaciones.
+
+### Decisiones
+
+- Usar subestructuras anidadas para Consul/registro, logging e infraestructura
+  PDF.
+- `CONSUL_*` pertenece a `internal/config`.
+- `LOG_LEVEL` y `LOG_FORMAT` permanecen en `internal/logging`, con configuración
+  explícita.
+- `PDF_OXIDE_LIB_PATH` permanece en infraestructura PDF, con inyección
+  explícita.
+- No agregar variables de entorno ni dependencias.
+
+### Tareas
+
+#### C1 — Configuración de Consul y registro
+
+- [ ] Mover lectura, defaults, trims, validación y separación de tags a
+  `internal/config`.
+- [ ] Eliminar `os.Getenv` de `cmd/server/main.go`.
+- [ ] Preservar Consul opcional, validación de campos obligatorios y comas
+  internas en tags.
+- [ ] Cubrir con tests de `internal/config` y `serviceRegistration`.
+
+#### C2 — Logging e infraestructura explícitos
+
+- [ ] Reemplazar lecturas implícitas de entorno en logging y PDF por
+  configuración explícita.
+- [ ] Conservar defaults, validaciones y el skip de integración sin librería
+  nativa.
+- [ ] Mantener tests de logging y extractor.
+
+#### C3 — Verificación y documentación
+
+- [ ] Ejecutar `gofmt -l .`, `go vet ./...`, `make test-unit` y `make build`.
+- [ ] Verificar que `cmd/server/main.go` no tenga lecturas de entorno.
+- [ ] Actualizar documentación solo si cambia el contrato visible.
+
+### Checkpoint de configuración
+
+- [ ] C1, C2 y C3 completadas.
+- [ ] Comportamiento de Consul, logging y extracción preservado.
+- [ ] Revisar el diff antes de continuar con T34–T41.

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -181,9 +182,14 @@ func TestServeAnswersTheHealthProbe(t *testing.T) {
 		t.Fatalf("the health probe failed: %v", err)
 	}
 
-	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want %d", response.StatusCode, http.StatusOK)
+	}
+	if _, err := io.Copy(io.Discard, response.Body); err != nil {
+		t.Fatalf("the health probe body could not be read: %v", err)
+	}
+	if err := response.Body.Close(); err != nil {
+		t.Fatalf("the health probe body could not be closed: %v", err)
 	}
 
 	stopCh <- syscall.SIGTERM

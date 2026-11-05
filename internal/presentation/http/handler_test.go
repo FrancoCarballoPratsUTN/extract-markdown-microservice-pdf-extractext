@@ -1,5 +1,3 @@
-//go:build unit
-
 package http
 
 import (
@@ -75,6 +73,54 @@ func TestExtractHandlerSuccessRawPDF(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// The same document must get the same answer whichever Content-Type carries it:
+// the multipart envelope is not part of the payload budget.
+func TestExtractHandlerAcceptsMultipartPDFExactlyAtTheLimit(t *testing.T) {
+	const limit = 4096
+	body, contentType := multipartBodyWithPDF(t, limit, 0)
+
+	req := httptest.NewRequest(http.MethodPost, "/extract", body)
+	req.Header.Set("Content-Type", contentType)
+
+	rec := httptest.NewRecorder()
+	h := &Handler{
+		uc:       &fakeUsecase{resp: domain.ExtractResponse{Content: "ok", PageCount: 1}},
+		maxBytes: limit,
+		logger:   logging.Discard(),
+	}
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// An oversized multipart document is a 413, not a 400 "could not read request
+// body": the client has to know that the file is too big, not that the upload
+// broke.
+func TestExtractHandlerMultipartPDFAboveTheLimitReturns413(t *testing.T) {
+	const limit = 4096
+	body, contentType := multipartBodyWithPDF(t, limit+1, 0)
+
+	req := httptest.NewRequest(http.MethodPost, "/extract", body)
+	req.Header.Set("Content-Type", contentType)
+
+	rec := httptest.NewRecorder()
+	h := &Handler{
+		uc:       &fakeUsecase{},
+		maxBytes: limit,
+		logger:   logging.Discard(),
+	}
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"status":413`) {
+		t.Fatalf("expected problem details 413, got %s", rec.Body.String())
 	}
 }
 
