@@ -3,18 +3,16 @@ package reqctx
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"strings"
 	"unicode"
 )
 
-const (
-	maxRequestIDLength = 128
-	generatedIDLength  = 36
-)
+const maxRequestIDLength = 128
 
 type contextKey struct{}
 
+// EnsureRequestID returns a context containing candidate when it is valid,
+// otherwise it generates and stores a new request ID.
 func EnsureRequestID(ctx context.Context, candidate string) (context.Context, string) {
 	candidate = strings.TrimSpace(candidate)
 	if !IsValid(candidate) {
@@ -23,18 +21,25 @@ func EnsureRequestID(ctx context.Context, candidate string) (context.Context, st
 	return context.WithValue(ctx, contextKey{}, candidate), candidate
 }
 
+// WithRequestID returns a context containing requestID when it is valid after
+// trimming surrounding whitespace; invalid or empty IDs leave ctx unchanged.
 func WithRequestID(ctx context.Context, requestID string) context.Context {
+	requestID = strings.TrimSpace(requestID)
 	if !IsValid(requestID) {
 		return ctx
 	}
 	return context.WithValue(ctx, contextKey{}, requestID)
 }
 
+// RequestID returns the request ID stored in ctx, or an empty string when none
+// is present.
 func RequestID(ctx context.Context) string {
 	requestID, _ := ctx.Value(contextKey{}).(string)
 	return requestID
 }
 
+// IsValid reports whether requestID is non-empty, ASCII, non-control,
+// non-whitespace, and at most 128 bytes long.
 func IsValid(requestID string) bool {
 	if requestID == "" || len(requestID) > maxRequestIDLength {
 		return false
@@ -47,13 +52,7 @@ func IsValid(requestID string) bool {
 	return true
 }
 
+// newRequestID generates a random opaque request ID.
 func newRequestID() string {
-	var randomBytes [16]byte
-	_, _ = rand.Read(randomBytes[:])
-	randomBytes[6] = (randomBytes[6] & 0x0f) | 0x40
-	randomBytes[8] = (randomBytes[8] & 0x3f) | 0x80
-
-	encoded := hex.EncodeToString(randomBytes[:])
-	return encoded[:8] + "-" + encoded[8:12] + "-" + encoded[12:16] +
-		"-" + encoded[16:20] + "-" + encoded[20:]
+	return rand.Text()
 }

@@ -139,8 +139,8 @@ El servicio emite logs estructurados a `stdout`. La observabilidad es
 
 Las requests pueden incluir `X-Request-ID`. Los valores válidos se conservan
 en la respuesta y se propagan a los logs de acceso, extracción, rechazo y
-recovery. Si el header falta o es inválido, el servicio genera un UUID y lo
-devuelve en la respuesta.
+recovery. Si el header falta o es inválido, el servicio genera un identificador
+aleatorio opaco de 26 caracteres base32 y lo devuelve en la respuesta.
 
 - **Access log** (`"http request"`): una línea por petición con `method`, `path`,
   `status` y `duration_ms`. El nivel sigue

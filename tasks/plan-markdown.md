@@ -754,7 +754,7 @@ definición del separador), **KISS** (sin compatibilidad bidireccional ambigua).
 
 ---
 
-### [ ] T35 — Endurecer `internal/reqctx`
+### [x] T35 — Endurecer `internal/reqctx`
 
 **Descripción:** la API pública no está documentada, `WithRequestID` se comporta
 distinto de `EnsureRequestID` sin decirlo, hay una constante que solo usa el
@@ -763,31 +763,31 @@ resuelve en una (`crypto/rand.Text()`, Go ≥ 1.24; `go.mod` es 1.26). Se fija e
 contrato antes de propagarlo (T36+).
 
 **Acceptance criteria:**
-- [ ] Doc comment en `EnsureRequestID`, `WithRequestID`, `RequestID`, `IsValid`
+- [x] Doc comment en `EnsureRequestID`, `WithRequestID`, `RequestID`, `IsValid`
   y `newRequestID` (convención del repo).
-- [ ] `WithRequestID` normaliza con `strings.TrimSpace`, igual que
+- [x] `WithRequestID` normaliza con `strings.TrimSpace`, igual que
   `EnsureRequestID`; un ID inválido sigue devolviendo el contexto sin ID, pero
   ahora está **documentado** y testeado.
-- [ ] `TestWithRequestID` cubre válido, con espacios exteriores, inválido y
+- [x] `TestWithRequestID` cubre válido, con espacios exteriores, inválido y
   vacío.
-- [ ] `TestIsValid` cubre el borde exacto: 128 caracteres válidos, 129
+- [x] `TestIsValid` cubre el borde exacto: 128 caracteres válidos, 129
   inválidos; control (`\n`, `\t`), espacio y no-ASCII.
-- [ ] `newRequestID` es **una línea**: `return rand.Text()` (D6). Se eliminan
+- [x] `newRequestID` es **una línea**: `return rand.Text()` (D6). Se eliminan
   `encoding/hex`, el array de 16 bytes y la manipulación de los bits de versión
   y variante.
-- [ ] `generatedIDLength` se elimina de producción. El test define su propia
+- [x] `generatedIDLength` se elimina de producción. El test define su propia
   constante `wantGeneratedIDLength = 26` (longitud actual de `rand.Text()`),
   documentada como **contrato mínimo**, no como formato estable.
-- [ ] `TestEnsureRequestIDGeneratesValueWhenMissing` valida: longitud 26,
+- [x] `TestEnsureRequestIDGeneratesValueWhenMissing` valida: longitud 26,
   alfabeto base32 RFC 4648 (`A-Z`, `2-7`), que `IsValid` lo acepta y que dos
   llamadas generan valores **distintos**.
-- [ ] `TestNewRequestIDIsUniqueAcrossCalls` genera un lote (p. ej. 1000) y
+- [x] `TestNewRequestIDIsUniqueAcrossCalls` genera un lote (p. ej. 1000) y
   comprueba que no hay colisiones: evidencia de que dos peticiones no pueden
   confundirse.
-- [ ] `README.md` deja de prometer un **UUID**: la sección de `X-Request-ID`
+- [x] `README.md` deja de prometer un **UUID**: la sección de `X-Request-ID`
   describe "un identificador aleatorio opaco (26 caracteres base32) cuando el
   cliente no lo envía". El README es parte del contrato de este release.
-- [ ] Sin helpers nuevos (`MustParse`, `Parse`) ni opciones: YAGNI.
+- [x] Sin helpers nuevos (`MustParse`, `Parse`) ni opciones: YAGNI.
 
 **Refactor de referencia:**
 ```go
@@ -799,10 +799,10 @@ func newRequestID() string { return rand.Text() }
 ```
 
 **Verification:**
-- [ ] RED/GREEN: `CGO_ENABLED=0 go test ./internal/reqctx -v`
-- [ ] Auditoría: `grep -rn 'hex.EncodeToString\|generatedIDLength\|randomBytes'
+- [x] RED/GREEN: `CGO_ENABLED=0 go test ./internal/reqctx -v`
+- [x] Auditoría: `grep -rn 'hex.EncodeToString\|generatedIDLength\|randomBytes'
   --include=*.go internal/` → 0 en producción.
-- [ ] `make test`.
+- [x] `make test`.
 
 **Dependencies:** ninguna.
 **Files likely touched:** `internal/reqctx/reqctx.go`,
