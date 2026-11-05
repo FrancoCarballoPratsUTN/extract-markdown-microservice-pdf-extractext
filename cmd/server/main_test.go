@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/config"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/consul"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
 )
 
@@ -204,42 +205,52 @@ func TestServeAnswersTheHealthProbe(t *testing.T) {
 	}
 }
 
-func TestServiceRegistrationPreservesCommasInsideTags(t *testing.T) {
-	t.Setenv("CONSUL_ENABLED", "true")
-	t.Setenv("CONSUL_HTTP_ADDR", "http://consul:8500")
-	t.Setenv("CONSUL_HTTP_TOKEN", "token")
-	t.Setenv("CONSUL_SERVICE_TAGS", "security-headers@file,extract-cb@file; metrics ;")
+func TestServiceRegistrationUsesTheResolvedConsulConfig(t *testing.T) {
+	cfg := config.Config{
+		Port: "8080",
+		Consul: config.ConsulConfig{
+			Enabled:         true,
+			HTTPAddr:        "http://consul:8500",
+			HTTPToken:       "token",
+			ServiceName:     "extract",
+			ServiceID:       "extract-1",
+			ServiceAddress:  "10.0.0.5",
+			ServiceCheckURL: "http://10.0.0.5:8080/healthz",
+			ServiceTags:     []string{"security-headers@file,extract-cb@file", "metrics"},
+		},
+	}
 
-	_, registration, err := serviceRegistration(config.Config{Port: "8080"})
+	client, registration, err := serviceRegistration(cfg)
 	if err != nil {
 		t.Fatalf("serviceRegistration() unexpected error: %v", err)
 	}
-
-	want := []string{
-		"security-headers@file,extract-cb@file",
-		"metrics",
+	if client == nil {
+		t.Fatal("serviceRegistration() client = nil with Consul enabled")
 	}
-	if !reflect.DeepEqual(registration.Tags, want) {
-		t.Fatalf("tags = %#v, want %#v", registration.Tags, want)
+
+	want := consul.ServiceRegistration{
+		ID:      "extract-1",
+		Name:    "extract",
+		Address: "10.0.0.5",
+		Port:    8080,
+		Check:   "http://10.0.0.5:8080/healthz",
+		Tags:    []string{"security-headers@file,extract-cb@file", "metrics"},
+	}
+	if !reflect.DeepEqual(registration, want) {
+		t.Fatalf("registration = %#v, want %#v", registration, want)
 	}
 }
 
-func TestSplitServiceTags(t *testing.T) {
-	tests := []struct {
-		raw  string
-		want []string
-	}{
-		{"", nil},
-		{"metrics", []string{"metrics"}},
-		{"a,b", []string{"a,b"}},
-		{"a;b", []string{"a", "b"}},
-		{" a ; ; b ", []string{"a", "b"}},
-		{"a;b,c", []string{"a", "b,c"}},
+func TestServiceRegistrationDisabledReturnsNoClient(t *testing.T) {
+	client, registration, err := serviceRegistration(testConfig())
+	if err != nil {
+		t.Fatalf("serviceRegistration() unexpected error: %v", err)
 	}
-	for _, tt := range tests {
-		if got := splitServiceTags(tt.raw); !reflect.DeepEqual(got, tt.want) {
-			t.Errorf("splitServiceTags(%q) = %#v, want %#v", tt.raw, got, tt.want)
-		}
+	if client != nil {
+		t.Fatal("serviceRegistration() client must be nil with Consul disabled")
+	}
+	if !reflect.DeepEqual(registration, consul.ServiceRegistration{}) {
+		t.Fatalf("registration = %#v, want the zero value", registration)
 	}
 }
 
@@ -251,14 +262,15 @@ func TestServiceRegistrationLogsTheEffectiveTags(t *testing.T) {
 	}))
 	defer consulServer.Close()
 
-	t.Setenv("CONSUL_ENABLED", "true")
-	t.Setenv("CONSUL_HTTP_ADDR", consulServer.URL)
-	t.Setenv("CONSUL_HTTP_TOKEN", "token")
-	t.Setenv("CONSUL_SERVICE_ID", "extract-test")
-	t.Setenv("CONSUL_SERVICE_TAGS", "security-headers@file,extract-cb@file;metrics")
-
 	cfg := testConfig()
 	cfg.Port = freePort(t)
+	cfg.Consul = config.ConsulConfig{
+		Enabled:     true,
+		HTTPAddr:    consulServer.URL,
+		HTTPToken:   "token",
+		ServiceID:   "extract-test",
+		ServiceTags: []string{"security-headers@file,extract-cb@file", "metrics"},
+	}
 	stopCh := make(chan os.Signal, 1)
 	result := make(chan error, 1)
 	go func() {

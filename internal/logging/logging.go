@@ -21,11 +21,25 @@ type Options struct {
 	Output io.Writer
 }
 
-// New construye el logger de producción leyendo LOG_LEVEL y LOG_FORMAT del
-// entorno. La configuración del log vive en este paquete a propósito, separada
-// de internal/config, que se reserva para las variables de negocio.
-func New() (*slog.Logger, error) {
-	rawLevel := os.Getenv("LOG_LEVEL")
+// Config es la configuración explícita del logger de producción. Los campos
+// vacíos caen a los defaults ("info" y "json") al construir con New.
+type Config struct {
+	Level  string
+	Format string
+}
+
+// Load lee LOG_LEVEL y LOG_FORMAT del entorno. La configuración del log vive
+// en este paquete a propósito, separada de internal/config, que se reserva
+// para las variables de negocio. Los defaults y la validación los aplica New.
+func Load() Config {
+	return Config{Level: os.Getenv("LOG_LEVEL"), Format: os.Getenv("LOG_FORMAT")}
+}
+
+// New construye el logger de producción con una configuración explícita:
+// aplica los defaults a los campos vacíos y rechaza valores inválidos, para
+// que un typo aborte el arranque en lugar de pasar desapercibido.
+func New(cfg Config) (*slog.Logger, error) {
+	rawLevel := cfg.Level
 	if rawLevel == "" {
 		rawLevel = defaultLevel
 	}
@@ -34,7 +48,7 @@ func New() (*slog.Logger, error) {
 		return nil, err
 	}
 
-	format := os.Getenv("LOG_FORMAT")
+	format := cfg.Format
 	if format == "" {
 		format = defaultFormat
 	}

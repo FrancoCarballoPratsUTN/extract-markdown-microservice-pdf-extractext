@@ -57,11 +57,8 @@ func TestParseLevelInvalid(t *testing.T) {
 	}
 }
 
-func TestNewDefaultLevel(t *testing.T) {
-	t.Setenv("LOG_LEVEL", "")
-	t.Setenv("LOG_FORMAT", "text")
-
-	logger, err := New()
+func TestNewAppliesDefaultsWithEmptyConfig(t *testing.T) {
+	logger, err := New(Config{})
 	if err != nil {
 		t.Fatalf("New() unexpected error: %v", err)
 	}
@@ -71,16 +68,32 @@ func TestNewDefaultLevel(t *testing.T) {
 }
 
 func TestNewInvalidLevelFails(t *testing.T) {
-	t.Setenv("LOG_LEVEL", "nope")
-	if _, err := New(); err == nil {
-		t.Fatal("New() expected an error for an invalid LOG_LEVEL")
+	if _, err := New(Config{Level: "nope"}); err == nil {
+		t.Fatal("New() expected an error for an invalid level")
 	}
 }
 
 func TestNewInvalidFormatFails(t *testing.T) {
-	t.Setenv("LOG_FORMAT", "yaml")
-	if _, err := New(); err == nil {
-		t.Fatal("New() expected an error for an invalid LOG_FORMAT")
+	if _, err := New(Config{Format: "yaml"}); err == nil {
+		t.Fatal("New() expected an error for an invalid format")
+	}
+}
+
+func TestLoadReadsTheLogEnvironment(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "debug")
+	t.Setenv("LOG_FORMAT", "text")
+
+	if got := Load(); got != (Config{Level: "debug", Format: "text"}) {
+		t.Errorf("Load() = %#v, want the environment values", got)
+	}
+}
+
+func TestLoadLeavesDefaultsToNew(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "")
+	t.Setenv("LOG_FORMAT", "")
+
+	if got := Load(); got != (Config{}) {
+		t.Errorf("Load() = %#v, want the zero Config so New applies the defaults", got)
 	}
 }
 

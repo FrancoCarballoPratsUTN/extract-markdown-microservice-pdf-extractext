@@ -1224,29 +1224,55 @@ clientes y servicios, sin defaults, trims ni validaciones.
 
 #### C1 — Configuración de Consul y registro
 
-- [ ] Mover lectura, defaults, trims, validación y separación de tags a
+- [x] Mover lectura, defaults, trims, validación y separación de tags a
   `internal/config`.
-- [ ] Eliminar `os.Getenv` de `cmd/server/main.go`.
-- [ ] Preservar Consul opcional, validación de campos obligatorios y comas
+- [x] Eliminar `os.Getenv` de `cmd/server/main.go`.
+- [x] Preservar Consul opcional, validación de campos obligatorios y comas
   internas en tags.
-- [ ] Cubrir con tests de `internal/config` y `serviceRegistration`.
+- [x] Cubrir con tests de `internal/config` y `serviceRegistration`.
 
 #### C2 — Logging e infraestructura explícitos
 
-- [ ] Reemplazar lecturas implícitas de entorno en logging y PDF por
+- [x] Reemplazar lecturas implícitas de entorno en logging y PDF por
   configuración explícita.
-- [ ] Conservar defaults, validaciones y el skip de integración sin librería
+- [x] Conservar defaults, validaciones y el skip de integración sin librería
   nativa.
-- [ ] Mantener tests de logging y extractor.
+- [x] Mantener tests de logging y extractor.
 
 #### C3 — Verificación y documentación
 
-- [ ] Ejecutar `gofmt -l .`, `go vet ./...`, `make test-unit` y `make build`.
-- [ ] Verificar que `cmd/server/main.go` no tenga lecturas de entorno.
-- [ ] Actualizar documentación solo si cambia el contrato visible.
+- [x] Ejecutar `gofmt -l .`, `go vet ./...`, `make test-unit` y `make build`.
+- [x] Verificar que `cmd/server/main.go` no tenga lecturas de entorno.
+- [x] Actualizar documentación solo si cambia el contrato visible.
 
 ### Checkpoint de configuración
 
-- [ ] C1, C2 y C3 completadas.
-- [ ] Comportamiento de Consul, logging y extracción preservado.
-- [ ] Revisar el diff antes de continuar con T34–T41.
+- [x] C1, C2 y C3 completadas.
+- [x] Comportamiento de Consul, logging y extracción preservado.
+- [x] Revisar el diff antes de continuar con T34–T41.
+
+**Resultado (2026-11-05):**
+- **C1 (RED → GREEN):** `internal/config/consul.go` nuevo con `ConsulConfig`,
+  `LoadConsul`/`loadConsul`, `ConsulServiceRegistration` y `splitConsulTags`
+  (los `;` separan, las comas de Traefik se preservan). `Config` gana el campo
+  anidado `Consul`. `main.go` queda sin `os.Getenv` ni `os.Hostname`:
+  `loadConfig` = `LoadConsul` + `loadServiceConfig` (KV o entorno) y
+  `serviceRegistration` sólo traduce el registro resuelto al cliente. RED:
+  compilación de `consul_test.go` con `loadConsul` indefinido; GREEN: suite de
+  `internal/config` y `cmd/server` en verde, incluido
+  `TestLoadConfigUsesConsulWhenEnabled` sin cambios.
+- **C2 (RED → GREEN):** `logging.Config{Level, Format}` + `logging.Load()`
+  (única lectura de `LOG_LEVEL`/`LOG_FORMAT`) y `logging.New(cfg)` con los
+  mismos defaults y validaciones; `main` construye con
+  `logging.New(logging.Load())`. En PDF no hubo cambio: el extractor de
+  producción ya no leía entorno; `PDF_OXIDE_LIB_PATH` lo consume el binding de
+  terceros en `dlopen` y el skip de integración, que se conserva.
+- **C3:** `gofmt -l .` vacío, `go vet ./...` limpio, `make test`,
+  `make test-unit` y `make build` verdes, `docker build --target test .` verde
+  (incluye integración con la librería nativa). Ramas nuevas cubiertas
+  (`LoadConsul`, `loadConsul`, `splitConsulTags`, `logging.Load` y
+  `logging.New` al 100 %; `ServiceRegistration` 94,7 %: sólo queda sin cubrir
+  el error de `os.Hostname`, no simulable). Contrato visible intacto (mismas
+  variables y semántica), por lo que no hubo cambios de documentación de
+  usuario. La revisión del diff de este checkpoint se hizo con T34–T41 ya
+  cerradas; la nota original quedó desactualizada.

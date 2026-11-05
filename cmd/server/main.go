@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -24,7 +22,7 @@ import (
 )
 
 func main() {
-	logger, err := logging.New()
+	logger, err := logging.New(logging.Load())
 	if err != nil {
 		// El logger no se pudo construir: stderr es lo único que queda.
 		fmt.Fprintf(os.Stderr, "invalid logging configuration: %v\n", err)
@@ -56,22 +54,31 @@ func run(logger *slog.Logger) error {
 }
 
 func loadConfig() (config.Config, error) {
-	if !strings.EqualFold(os.Getenv("CONSUL_ENABLED"), "true") {
-		return config.Load()
-	}
-
-	baseURL := strings.TrimSpace(os.Getenv("CONSUL_HTTP_ADDR"))
-	token := strings.TrimSpace(os.Getenv("CONSUL_HTTP_TOKEN"))
-	prefix := strings.TrimSpace(os.Getenv("CONSUL_KV_PREFIX"))
-	if baseURL == "" || token == "" || prefix == "" {
-		return config.Config{}, fmt.Errorf("CONSUL_HTTP_ADDR, CONSUL_HTTP_TOKEN and CONSUL_KV_PREFIX are required when CONSUL_ENABLED=true")
-	}
-
-	client, err := consul.NewKVClientWithCA(baseURL, token, os.Getenv("CONSUL_HTTP_CA_FILE"))
+	consulCfg, err := config.LoadConsul()
 	if err != nil {
 		return config.Config{}, err
 	}
-	values, err := client.LoadPrefix(prefix)
+
+	cfg, err := loadServiceConfig(consulCfg)
+	if err != nil {
+		return config.Config{}, err
+	}
+	cfg.Consul = consulCfg
+	return cfg, nil
+}
+
+// loadServiceConfig resuelve las variables de negocio: del KV de Consul
+// cuando está habilitado y del entorno del proceso en caso contrario.
+func loadServiceConfig(consulCfg config.ConsulConfig) (config.Config, error) {
+	if !consulCfg.Enabled {
+		return config.Load()
+	}
+
+	client, err := consul.NewKVClientWithCA(consulCfg.HTTPAddr, consulCfg.HTTPToken, consulCfg.HTTPCAFile)
+	if err != nil {
+		return config.Config{}, err
+	}
+	values, err := client.LoadPrefix(consulCfg.KVPrefix)
 	if err != nil {
 		return config.Config{}, err
 	}
@@ -196,57 +203,30 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, extracto
 	return shutdownErr
 }
 
+// serviceRegistration construye el cliente y el registro de Consul a partir
+// de la configuración ya resuelta: main no lee el entorno, sólo traduce el
+// registro resuelto por internal/config al tipo del cliente.
 func serviceRegistration(cfg config.Config) (*consul.KVClient, consul.ServiceRegistration, error) {
-	if !strings.EqualFold(os.Getenv("CONSUL_ENABLED"), "true") {
+	if !cfg.Consul.Enabled {
 		return nil, consul.ServiceRegistration{}, nil
 	}
-	port, err := strconv.Atoi(cfg.Port)
+
+	resolved, err := cfg.Consul.ServiceRegistration(cfg.Port)
 	if err != nil {
-		return nil, consul.ServiceRegistration{}, fmt.Errorf("invalid service port %q: %w", cfg.Port, err)
+		return nil, consul.ServiceRegistration{}, err
 	}
-	address := strings.TrimSpace(os.Getenv("CONSUL_SERVICE_ADDRESS"))
-	if address == "" {
-		address, err = os.Hostname()
-		if err != nil {
-			return nil, consul.ServiceRegistration{}, fmt.Errorf("resolve service hostname: %w", err)
-		}
-	}
-	name := os.Getenv("CONSUL_SERVICE_NAME")
-	if name == "" {
-		name = "extract"
-	}
-	id := strings.TrimSpace(os.Getenv("CONSUL_SERVICE_ID"))
-	if id == "" {
-		id = name + "-" + address
-	}
-	check := os.Getenv("CONSUL_SERVICE_CHECK_URL")
-	if check == "" {
-		check = "http://" + address + ":" + cfg.Port + "/healthz"
-	}
-	tags := splitServiceTags(os.Getenv("CONSUL_SERVICE_TAGS"))
-	client, err := consul.NewKVClientWithCA(
-		os.Getenv("CONSUL_HTTP_ADDR"),
-		os.Getenv("CONSUL_HTTP_TOKEN"),
-		os.Getenv("CONSUL_HTTP_CA_FILE"),
-	)
+	client, err := consul.NewKVClientWithCA(cfg.Consul.HTTPAddr, cfg.Consul.HTTPToken, cfg.Consul.HTTPCAFile)
 	if err != nil {
 		return nil, consul.ServiceRegistration{}, err
 	}
 	return client, consul.ServiceRegistration{
-		ID: id, Name: name, Address: address, Port: port, Check: check, Tags: tags,
+		ID:      resolved.ID,
+		Name:    resolved.Name,
+		Address: resolved.Address,
+		Port:    resolved.Port,
+		Check:   resolved.Check,
+		Tags:    resolved.Tags,
 	}, nil
-}
-
-// splitServiceTags separates Consul tags on semicolons. Commas remain part of
-// a tag because Traefik middleware chains use commas internally.
-func splitServiceTags(raw string) []string {
-	var tags []string
-	for _, tag := range strings.Split(raw, ";") {
-		if tag = strings.TrimSpace(tag); tag != "" {
-			tags = append(tags, tag)
-		}
-	}
-	return tags
 }
 
 // buildExtractor wires the pdf_oxide-backed extractor and proves the native

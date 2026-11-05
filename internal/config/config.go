@@ -25,8 +25,9 @@ const (
 	maxQueueMB  = 1024
 )
 
-// Config is the effective configuration of the service. Every value comes
-// from the environment.
+// Config is the effective configuration of the service. The business values
+// come from the environment or from the Consul KV; Consul holds the bootstrap
+// of that connection, always read from the process environment.
 type Config struct {
 	Port            string
 	MaxUploadMB     int
@@ -37,6 +38,7 @@ type Config struct {
 	WriteTimeout    int // seconds
 	ShutdownTimeout int // seconds
 	MaxPages        int // per-document page cap; 0 disables the limit
+	Consul          ConsulConfig
 }
 
 // Load reads the configuration from the environment.
