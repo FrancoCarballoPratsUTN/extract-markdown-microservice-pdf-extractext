@@ -863,7 +863,7 @@ con una sola implementación).
 
 ---
 
-### [ ] T37 — Correlación del `panic` del extractor
+### [x] T37 — Correlación del `panic` del extractor
 
 **Descripción:** el pool pasa un contexto con el ID, pero `extractor.log(ctx)`
 lo ignora, así que `"panic recovered while extracting"` —el log más útil para
@@ -871,21 +871,21 @@ diagnosticar un 500— sale sin `request_id`. Es el AC de T31 que hoy no se
 cumple.
 
 **Acceptance criteria:**
-- [ ] RED: `TestPanicLogCarriesRequestID` falla hoy. Usa un `fakeDocument` cuyo
+- [x] RED: `TestPanicLogCarriesRequestID` falla hoy. Usa un `fakeDocument` cuyo
   `ToMarkdownAll` paniquea, un logger a buffer y
   `reqctx.WithRequestID(context.Background(), "orchestrator-123")`.
-- [ ] GREEN: `extractor.log(ctx)` devuelve
+- [x] GREEN: `extractor.log(ctx)` devuelve
   `logging.WithRequestID(ctx, logger)`; el log contiene
   `"request_id":"orchestrator-123"`.
-- [ ] El mismo test sigue comprobando `panic` y `stack` (no se pierde el
+- [x] El mismo test sigue comprobando `panic` y `stack` (no se pierde el
   diagnóstico ni el truncado de `logging.Truncate`).
-- [ ] Sin cambios en el contrato de `Extractor` ni en el pool (el contexto ya
+- [x] Sin cambios en el contrato de `Extractor` ni en el pool (el contexto ya
   llevaba el ID).
-- [ ] `make test` verde.
+- [x] `make test` verde.
 
 **Verification:**
-- [ ] RED/GREEN: `CGO_ENABLED=0 go test ./internal/infrastructure/pdf -run 'TestPanic'`
-- [ ] `make test`.
+- [x] RED/GREEN: `CGO_ENABLED=0 go test ./internal/infrastructure/pdf -run 'TestPanic'`
+- [x] `make test`.
 
 **Dependencies:** T36.
 **Files likely touched:** `internal/infrastructure/pdf/extractor.go`,
@@ -1132,7 +1132,7 @@ es no-root; el compose elimina la superficie restante del contenedor.
 - [x] T34 — completada (2026-11-04); helper, log efectivo, README y nota de release
 - [ ] T35 — pendiente
 - [ ] T36 — pendiente
-- [ ] T37 — pendiente
+- [x] T37 — completada (2026-11-05)
 - [x] T38 — completada (2026-11-05)
 - [ ] T39 — pendiente
 - [ ] T40 — pendiente

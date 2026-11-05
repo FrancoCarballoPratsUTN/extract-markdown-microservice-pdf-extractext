@@ -52,7 +52,7 @@ func (e *extractor) log(ctx context.Context) *slog.Logger {
 	if e.logger == nil {
 		return slog.Default()
 	}
-	return e.logger
+	return logging.WithRequestID(ctx, e.logger)
 }
 
 // Extract converts a PDF payload into Markdown via the engine's own

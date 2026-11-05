@@ -1,14 +1,18 @@
 package pdf
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/reqctx"
 	pdfoxide "github.com/yfedoseev/pdf_oxide/go"
 )
 
@@ -17,12 +21,18 @@ type fakeDocument struct {
 	pageErr     error
 	markdown    string
 	markdownErr error
+	panicValue  any
 	closed      bool
 }
 
 func (f *fakeDocument) PageCount() (int, error) { return f.pageCount, f.pageErr }
 
-func (f *fakeDocument) ToMarkdownAll() (string, error) { return f.markdown, f.markdownErr }
+func (f *fakeDocument) ToMarkdownAll() (string, error) {
+	if f.panicValue != nil {
+		panic(f.panicValue)
+	}
+	return f.markdown, f.markdownErr
+}
 
 func (f *fakeDocument) Close() error {
 	f.closed = true
@@ -182,6 +192,40 @@ func TestExtractRecoversFromPanicDuringConversion(t *testing.T) {
 	}
 	if content != "" || pages != 0 {
 		t.Errorf("Extract() = (%q, %d), want zero values", content, pages)
+	}
+}
+
+func TestPanicLogCarriesRequestID(t *testing.T) {
+	var output bytes.Buffer
+	logger := logging.NewWithOptions(logging.Options{Level: slog.LevelDebug, Output: &output})
+	panicValue := strings.Repeat("x", logging.MaxValueLength*2)
+	extractor := &extractor{
+		logger:   logger,
+		maxPages: 10,
+		open: func([]byte) (document, error) {
+			return &fakeDocument{pageCount: 1, panicValue: panicValue}, nil
+		},
+	}
+	ctx := reqctx.WithRequestID(context.Background(), "orchestrator-123")
+
+	_, _, err := extractor.Extract(ctx, []byte("pdf"))
+
+	if !errors.Is(err, domain.ErrExtractionFailed) {
+		t.Fatalf("Extract() error = %v, want ErrExtractionFailed", err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatalf("decode panic log: %v; output=%q", err, output.String())
+	}
+	if record["request_id"] != "orchestrator-123" {
+		t.Errorf("request_id = %v, want %q", record["request_id"], "orchestrator-123")
+	}
+	if record["panic"] != logging.Truncate(panicValue, logging.MaxValueLength) {
+		t.Errorf("panic = %v, want truncated panic value", record["panic"])
+	}
+	stack, ok := record["stack"].(string)
+	if !ok || stack == "" {
+		t.Error("panic log has no stack")
 	}
 }
 
