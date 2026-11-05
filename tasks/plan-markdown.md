@@ -815,14 +815,14 @@ documentados), **KISS** (una línea de stdlib en vez de 12 de bit-twiddling),
 
 ---
 
-### [ ] T36 — Helper único `logging.WithRequestID` y refactor de call sites
+### [x] T36 — Helper único `logging.WithRequestID` y refactor de call sites
 
 **Descripción:** el campo `request_id` se añade hoy de cuatro maneras distintas
 (`logger.With`, append condicional, atributo siempre presente con `""`). Se crea
 un helper y se sustituyen todos los puntos para que el esquema sea uno solo.
 
 **Acceptance criteria:**
-- [ ] Nuevo `internal/logging/requestid.go`:
+- [x] Nuevo `internal/logging/requestid.go`:
   ```go
   // WithRequestID devuelve un logger que añade request_id cuando el contexto lo
   // trae. Es el único lugar que decide cómo se escribe el campo, para que todas
@@ -830,23 +830,23 @@ un helper y se sustituyen todos los puntos para que el esquema sea uno solo.
   func WithRequestID(ctx context.Context, logger *slog.Logger) *slog.Logger
   ```
 - [ ] `TestWithRequestIDAddsTheField` y `TestWithRequestIDWithoutIDLeavesTheLogUnchanged`.
-- [ ] Se sustituyen los 5 call sites: `middleware.go` (recovery y access log),
+- [x] Se sustituyen los 5 call sites: `middleware.go` (recovery y access log),
   `logging.go` (`logDecision`), `workerpool.go` (`run` y `logRejection`) y
   `queued_extractor.go` (abandono).
-- [ ] `logDecision` vuelve a reservar `len(attrs)+2` (con el helper deja de
+- [x] `logDecision` vuelve a reservar `len(attrs)+2` (con el helper deja de
   reasignar en cada rechazo).
-- [ ] Esquema único: el campo se **omite** cuando no hay ID; nunca `""`.
-- [ ] Auditoría DRY: `grep -rn '"request_id"' --include=*.go internal/ | grep -v _test.go`
+- [x] Esquema único: el campo se **omite** cuando no hay ID; nunca `""`.
+- [x] Auditoría DRY: `grep -rn '"request_id"' --include=*.go internal/ | grep -v _test.go`
   devuelve **exactamente 1** línea (el helper).
-- [ ] Sin ciclo de imports: `internal/logging` importa `internal/reqctx` (hoja),
+- [x] Sin ciclo de imports: `internal/logging` importa `internal/reqctx` (hoja),
   y ningún paquete de `internal/reqctx`.
-- [ ] `make test` + `make test-unit` verdes (el refactor no cambia ningún log
+- [x] `make test` + `make test-unit` verdes (el refactor no cambia ningún log
   observable salvo el `""` que desaparece).
 
 **Verification:**
-- [ ] RED/GREEN: `CGO_ENABLED=0 go test ./internal/logging ./internal/presentation/http ./internal/usecase`
-- [ ] Auditoría: `grep -rn '"request_id"' --include=*.go internal/ | grep -v _test.go`
-- [ ] `make test`.
+- [x] RED/GREEN: `CGO_ENABLED=0 go test ./internal/logging ./internal/presentation/http ./internal/usecase`
+- [x] Auditoría: `grep -rn '"request_id"' --include=*.go internal/ | grep -v _test.go`
+- [x] `make test`.
 
 **Dependencies:** T35 (contrato de `reqctx`).
 **Files likely touched:** `internal/logging/requestid.go` (nuevo),

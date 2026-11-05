@@ -6,7 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
-	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/reqctx"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
 )
 
 // queuedExtractor turns the pool's asynchronous submit/wait pair into the
@@ -44,13 +44,7 @@ func (q *queuedExtractor) Extract(ctx context.Context, data []byte) (domain.Extr
 			// The client gave up (or the deadline expired) while the job was
 			// still running. The job itself is not cancelled: it keeps running
 			// on its own context and its result is discarded.
-			requestID := reqctx.RequestID(ctx)
-			if requestID == "" {
-				q.logger.Warn("extraction abandoned before completion", "reason", err.Error())
-			} else {
-				q.logger.Warn("extraction abandoned before completion",
-					"reason", err.Error(), "request_id", requestID)
-			}
+			logging.WithRequestID(ctx, q.logger).Warn("extraction abandoned before completion", "reason", err.Error())
 			return domain.ExtractResponse{}, domain.ErrServiceUnavailable
 		}
 		return domain.ExtractResponse{}, err

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
+	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/reqctx"
 )
 
@@ -124,10 +125,7 @@ func (wp *WorkerPool) work() {
 func (wp *WorkerPool) run(j job) JobResult {
 	start := time.Now()
 	extractionContext := reqctx.WithRequestID(context.Background(), j.requestID)
-	logger := wp.logger
-	if j.requestID != "" {
-		logger = logger.With("request_id", j.requestID)
-	}
+	logger := logging.WithRequestID(extractionContext, wp.logger)
 	resp, err := wp.extractor.Extract(extractionContext, j.data)
 	duration := time.Since(start).Milliseconds()
 
@@ -183,12 +181,7 @@ func (wp *WorkerPool) Submit(ctx context.Context, data []byte) (chan JobResult, 
 // logRejection reports that a job could not be admitted. Both reasons mean the
 // same thing to the caller: this replica is saturated.
 func (wp *WorkerPool) logRejection(ctx context.Context, size int64) {
-	requestID := reqctx.RequestID(ctx)
-	if requestID == "" {
-		wp.logger.Warn("queue full; rejecting job", "bytes", size)
-		return
-	}
-	wp.logger.Warn("queue full; rejecting job", "bytes", size, "request_id", requestID)
+	logging.WithRequestID(ctx, wp.logger).Warn("queue full; rejecting job", "bytes", size)
 }
 
 // Wait blocks for a submitted job's result, or returns the context error if the

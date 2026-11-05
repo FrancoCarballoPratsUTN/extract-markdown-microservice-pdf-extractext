@@ -82,12 +82,11 @@ func withRecovery(logger *slog.Logger) func(http.Handler) http.Handler {
 				if recovered == nil {
 					return
 				}
-				logger.Error("panic recovered",
+				logging.WithRequestID(r.Context(), logger).Error("panic recovered",
 					"panic", logging.Truncate(fmt.Sprint(recovered), logging.MaxValueLength),
 					"method", r.Method,
 					"path", logging.Truncate(r.URL.Path, logging.MaxValueLength),
 					"stack", logging.Truncate(string(debug.Stack()), logging.MaxStackLength),
-					"request_id", reqctx.RequestID(r.Context()),
 				)
 				// Si la respuesta ya empezó, no se puede reescribir: un segundo
 				// documento JSON dejaría al cliente con un cuerpo corrupto. En
@@ -124,12 +123,11 @@ func withRequestLog(logger *slog.Logger) func(http.Handler) http.Handler {
 			if status == 0 {
 				status = http.StatusOK
 			}
-			logger.Log(r.Context(), accessLogLevel(status), "http request",
+			logging.WithRequestID(r.Context(), logger).Log(r.Context(), accessLogLevel(status), "http request",
 				"method", logging.Truncate(r.Method, maxMethodLength),
 				"path", logging.Truncate(r.URL.Path, logging.MaxValueLength),
 				"status", status,
 				"duration_ms", time.Since(start).Milliseconds(),
-				"request_id", reqctx.RequestID(r.Context()),
 			)
 		})
 	}
