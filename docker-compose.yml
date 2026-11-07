@@ -35,16 +35,13 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
+    env_file:
+      - path: .env
+        required: false
     environment:
-      - PORT=8080
-      - MAX_UPLOAD_MB=50
-      - MAX_PAGES=${MAX_PAGES:-1000}
-      - MAX_WORKERS=${MAX_WORKERS:-2}
-      - QUEUE_SIZE=${QUEUE_SIZE:-56}
-      - QUEUE_MAX_MB=256
-      - READ_TIMEOUT=30
-      - WRITE_TIMEOUT=30
-      - SHUTDOWN_TIMEOUT=${SHUTDOWN_TIMEOUT:-35}
+      # La ruta del .env es del host y no existe dentro del contenedor; la
+      # imagen fija la suya. environment tiene precedencia sobre env_file.
+      - PDF_OXIDE_LIB_PATH=/opt/pdf_oxide/libpdf_oxide.so
     # Por encima del SHUTDOWN_TIMEOUT: primero el servicio drena los trabajos
     # en vuelo y sólo después Docker lo mata.
     stop_grace_period: ${STOP_GRACE_PERIOD:-45s}
@@ -52,7 +49,7 @@ services:
       - "traefik.enable=true"
       - 'traefik.http.routers.extract.rule=HostRegexp(`extract\.universidad\.localhost|localhost|127\.0\.0\.1`)'
       - "traefik.http.routers.extract.entrypoints=web"
-      - "traefik.http.services.extract.loadbalancer.server.port=8080"
+      - "traefik.http.services.extract.loadbalancer.server.port=${PORT:-8080}"
     networks:
       - edge
     restart: unless-stopped
