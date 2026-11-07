@@ -7,13 +7,15 @@ import (
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
 )
 
-// Extractor is the port this business layer depends on. It is declared here, on
-// the consumer side, so the dependency points inward: the infrastructure layer
-// implements it without the business layer ever importing an adapter.
+// Extractor es el puerto del que depende esta capa de negocio. Se declara aquí,
+// en el lado del consumidor, para que la dependencia apunte hacia dentro: la
+// capa de infraestructura lo implementa sin que la capa de negocio importe
+// nunca un adaptador.
 type Extractor interface {
 	Extract(ctx context.Context, data []byte) (content string, pageCount int, err error)
 }
 
+// ExtractUsecase es el puerto que consume la capa HTTP para extraer documentos.
 type ExtractUsecase interface {
 	Extract(ctx context.Context, data []byte) (domain.ExtractResponse, error)
 }
@@ -22,6 +24,8 @@ type extractUsecase struct {
 	extractor Extractor
 }
 
+// NewExtractUsecase construye el caso de uso de extracción a partir del puerto
+// Extractor.
 func NewExtractUsecase(extractor Extractor) ExtractUsecase {
 	return &extractUsecase{extractor: extractor}
 }

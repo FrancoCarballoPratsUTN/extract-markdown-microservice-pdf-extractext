@@ -19,10 +19,11 @@ const (
 	extractBudget = 60 * time.Second
 )
 
-// requireNativeLib skips the run when the pdf_oxide shared library path is
-// unset: the purego backend dlopens it at runtime, so tests without the lib
-// would fail instead of running meaningfully. The container test stage exports
-// it; locally run: go run github.com/yfedoseev/pdf_oxide/go/cmd/install@v0.3.78 -shared
+// requireNativeLib omite la ejecución cuando no está definida la ruta de la
+// librería compartida de pdf_oxide: el backend purego la carga con dlopen en
+// tiempo de ejecución, así que los tests sin la librería fallarían en lugar de
+// ejecutarse de forma significativa. La etapa de test del contenedor la exporta;
+// en local ejecutar: go run github.com/yfedoseev/pdf_oxide/go/cmd/install@v0.3.78 -shared
 func requireNativeLib(t *testing.T) {
 	t.Helper()
 	if os.Getenv("PDF_OXIDE_LIB_PATH") == "" {

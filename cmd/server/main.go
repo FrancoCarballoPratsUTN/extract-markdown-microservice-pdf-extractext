@@ -229,12 +229,12 @@ func serviceRegistration(cfg config.Config) (*consul.KVClient, consul.ServiceReg
 	}, nil
 }
 
-// buildExtractor wires the pdf_oxide-backed extractor and proves the native
-// library is loadable before the server accepts traffic.
+// buildExtractor construye el extractor basado en pdf_oxide y comprueba que la
+// librería nativa se pueda cargar antes de que el servidor acepte tráfico.
 func buildExtractor(cfg config.Config, logger *slog.Logger) (usecase.Extractor, error) {
 	extractor := pdf.NewExtractor(cfg.MaxPages, logger)
-	// Boot probe: the engine rejecting an invalid payload proves the native
-	// library loaded; any other failure must stop the server before traffic.
+	// Sonda de arranque: que el motor rechace un payload inválido demuestra que
+	// la librería nativa se cargó; cualquier otro fallo debe impedir el arranque.
 	if _, _, err := extractor.Extract(context.Background(), []byte("startup probe")); err != nil &&
 		!errors.Is(err, domain.ErrInvalidPDF) {
 		return nil, fmt.Errorf("pdf_oxide unavailable: %w", err)

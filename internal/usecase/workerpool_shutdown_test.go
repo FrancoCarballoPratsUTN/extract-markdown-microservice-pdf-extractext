@@ -9,8 +9,8 @@ import (
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
 )
 
-// A pool that is shutting down must say so instead of accepting a job it will
-// never run.
+// Un pool que se está apagando debe decirlo en lugar de aceptar un trabajo que
+// nunca ejecutará.
 func TestWorkerPoolRejectsSubmitsAfterClose(t *testing.T) {
 	wp := NewWorkerPool(NewExtractUsecase(&mockExtractor{}), 1, 1, 1<<20, logging.Discard())
 	wp.Close()
@@ -21,8 +21,8 @@ func TestWorkerPoolRejectsSubmitsAfterClose(t *testing.T) {
 	}
 }
 
-// The drain is bounded: a worker stuck in a native call must not keep the
-// shutdown waiting forever.
+// El drenaje es acotado: un worker atascado en una llamada nativa no debe
+// mantener el apagado esperando para siempre.
 func TestWorkerPoolCloseContextGivesUpWhenTheDeadlineExpires(t *testing.T) {
 	gate := make(chan struct{})
 	wp := NewWorkerPool(&gatedExtractor{gate: gate}, 1, 1, 1<<20, logging.Discard())
@@ -41,7 +41,7 @@ func TestWorkerPoolCloseContextGivesUpWhenTheDeadlineExpires(t *testing.T) {
 	}
 }
 
-// A pool that drained cleanly reports no error: the shutdown may continue.
+// Un pool que drenó limpiamente no reporta error: el apagado puede continuar.
 func TestWorkerPoolCloseContextReturnsNilWhenTheJobsFinish(t *testing.T) {
 	wp := NewWorkerPool(NewExtractUsecase(&mockExtractor{}), 1, 1, 1<<20, logging.Discard())
 

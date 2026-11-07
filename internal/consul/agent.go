@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// ServiceRegistration describe el servicio que se anuncia en Consul.
 type ServiceRegistration struct {
 	ID      string
 	Name    string
@@ -17,6 +18,7 @@ type ServiceRegistration struct {
 	Tags    []string
 }
 
+// RegisterService anuncia el servicio en el agente local de Consul.
 func (c *KVClient) RegisterService(registration ServiceRegistration) error {
 	if registration.ID == "" || registration.Name == "" || registration.Address == "" ||
 		registration.Port < 1 || registration.Check == "" {
@@ -33,6 +35,7 @@ func (c *KVClient) RegisterService(registration ServiceRegistration) error {
 	return c.agentRequest(http.MethodPut, "/v1/agent/service/register", payload)
 }
 
+// DeregisterService retira el servicio del agente local de Consul.
 func (c *KVClient) DeregisterService(id string) error {
 	if strings.TrimSpace(id) == "" {
 		return fmt.Errorf("Consul service ID must not be empty")

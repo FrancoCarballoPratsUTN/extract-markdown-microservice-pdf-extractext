@@ -49,8 +49,8 @@ func TestWorkerPoolPropagatesRequestIDToExtractionLog(t *testing.T) {
 	}
 }
 
-// A rejected job is the symptom of a saturated replica: it has to be visible
-// in the log without being an error of the caller.
+// Un trabajo rechazado es el síntoma de una réplica saturada: debe ser visible
+// en el log sin ser un error del llamador.
 func TestWorkerPoolLogsAWarningWhenTheQueueIsFull(t *testing.T) {
 	var output bytes.Buffer
 	logger := logging.NewWithOptions(logging.Options{Level: slog.LevelDebug, Output: &output})
@@ -67,8 +67,8 @@ func TestWorkerPoolLogsAWarningWhenTheQueueIsFull(t *testing.T) {
 		t.Fatalf("first submit: %v", err)
 	}
 
-	// Let the worker pick the first job up so the second one lands in the
-	// queue buffer and the third one finds it full.
+	// Dejar que el worker tome el primer trabajo para que el segundo caiga en el
+	// buffer de la cola y el tercero la encuentre llena.
 	time.Sleep(10 * time.Millisecond)
 	if _, err := wp.Submit(ctx, []byte("b")); err != nil {
 		t.Fatalf("second submit: %v", err)

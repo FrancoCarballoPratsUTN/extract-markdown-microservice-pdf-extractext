@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-// The queue wait is bounded by a context deadline, and http.Server.WriteTimeout
-// does not provide one: without this the handler would wait on a queued job
-// until the client gave up.
+// La espera en cola está acotada por un deadline de contexto, y
+// http.Server.WriteTimeout no lo proporciona: sin esto el handler esperaría un
+// trabajo encolado hasta que el cliente se rindiera.
 func TestDeadlineMiddlewareBoundsTheHandlerContext(t *testing.T) {
 	var observed time.Duration
 	handler := WithDeadline(50 * time.Millisecond)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -31,8 +31,8 @@ func TestDeadlineMiddlewareBoundsTheHandlerContext(t *testing.T) {
 	}
 }
 
-// The derived context must be cancelled when the handler returns, or the
-// deadline timer leaks for the life of the process.
+// El contexto derivado debe cancelarse cuando el handler retorna, o el timer
+// del deadline se filtra durante toda la vida del proceso.
 func TestDeadlineMiddlewareCancelsWhenTheHandlerReturns(t *testing.T) {
 	var captured context.Context
 	handler := WithDeadline(time.Minute)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -13,56 +13,59 @@ import (
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/reqctx"
 )
 
-// ErrQueueFull reports that the bounded queue had no room for the job. Callers
-// should surface it as 503 so the client can retry with backoff.
+// ErrQueueFull indica que la cola acotada no tenía sitio para el trabajo. Los
+// llamadores deben responderlo como 503 para que el cliente reintente con
+// backoff.
 var ErrQueueFull = errors.New("queue full")
 
-// ErrClosed reports that the pool no longer accepts work because it is
-// shutting down.
+// ErrClosed indica que el pool ya no acepta trabajo porque se está apagando.
 var ErrClosed = errors.New("worker pool closed")
 
+// JobResult es el resultado de un trabajo: la respuesta extraída o el error.
 type JobResult struct {
 	Resp domain.ExtractResponse
 	Err  error
 }
 
-// job owns the channel its result is written to. One job belongs to exactly one
-// submitter, which is what stops concurrent callers from receiving each other's
-// documents.
+// job es dueño del canal en el que escribe su resultado. Un trabajo pertenece a
+// un único submitter, lo que evita que llamadores concurrentes reciban
+// documentos ajenos.
 type job struct {
 	data      []byte
 	result    chan JobResult
 	requestID string
 }
 
-// WorkerPool decouples HTTP request handling from the CPU-bound extraction. It
-// bounds the number of extractions running, the number of jobs waiting, and the
-// bytes those waiting jobs hold, so a burst costs latency rather than rejected
-// requests or an OOM kill.
+// WorkerPool desacopla el manejo de peticiones HTTP de la extracción, que usa
+// CPU. Acota las extracciones en curso, los trabajos en espera y los bytes que
+// retienen esos trabajos, de modo que una ráfaga cueste latencia en lugar de
+// peticiones rechazadas o un OOM kill.
 type WorkerPool struct {
 	extractor ExtractUsecase
 	jobs      chan job
 	wg        sync.WaitGroup
 	logger    *slog.Logger
 
-	// budget is the admission byte cap shared by running and queued jobs: both
-	// hold the whole PDF in memory until extraction returns.
+	// budget es el tope de bytes compartido por los trabajos en curso y los
+	// encolados: ambos retienen el PDF completo en memoria hasta que la
+	// extracción termina.
 	budget *byteBudget
 
 	mu     sync.Mutex
 	closed bool
 }
 
-// byteBudget is a counting semaphore for bytes. A plain int64 behind a mutex is
-// enough: Submit runs once per request, so contention is irrelevant next to the
-// extraction cost it guards.
+// byteBudget es un semáforo contador de bytes. Un int64 protegido por un mutex
+// es suficiente: Submit se ejecuta una vez por petición, así que la contención
+// es irrelevante frente al coste de extracción que protege.
 type byteBudget struct {
 	mu    sync.Mutex
 	limit int64
 	used  int64
 }
 
-// tryAcquire reserves size bytes, reporting false when the budget is spent.
+// tryAcquire reserva size bytes y devuelve false cuando el presupuesto está
+// agotado.
 func (b *byteBudget) tryAcquire(size int64) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -73,21 +76,24 @@ func (b *byteBudget) tryAcquire(size int64) bool {
 	return true
 }
 
-// release returns size bytes to the budget.
+// release devuelve size bytes al presupuesto.
 func (b *byteBudget) release(size int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.used -= size
 }
 
+// NewWorkerPool crea el pool y arranca sus workers. Un queueSize menor que el
+// número de workers se eleva a ese mínimo para que Submit nunca bloquee; un
+// maxQueuedBytes no positivo desactiva el tope de bytes.
 func NewWorkerPool(extractor ExtractUsecase, workers, queueSize int, maxQueuedBytes int64, logger *slog.Logger) *WorkerPool {
 	if workers <= 0 {
 		workers = 1
 	}
-	// The queue exists so Submit can hand off without blocking. That requires
-	// room for one job per worker: with a smaller buffer a non-blocking send
-	// would fail even though a worker sits idle, rejecting work the pool could
-	// have started immediately.
+	// La cola existe para que Submit pueda entregar el trabajo sin bloquearse.
+	// Eso exige sitio para un trabajo por worker: con un buffer menor, un envío
+	// no bloqueante fallaría aunque hubiera un worker libre, rechazando trabajo
+	// que el pool podría haber empezado de inmediato.
 	if queueSize < workers {
 		queueSize = workers
 	}
@@ -117,11 +123,11 @@ func (wp *WorkerPool) work() {
 	}
 }
 
-// run extracts one job and reports the outcome.
+// run extrae un trabajo e informa el resultado.
 //
-// The extraction runs on its own context because the native conversion cannot
-// be cancelled mid-call: a client that walks away must not abort the work
-// already in flight.
+// La extracción corre con su propio contexto porque la conversión nativa no se
+// puede cancelar a mitad de llamada: un cliente que se marcha no debe abortar
+// el trabajo ya en curso.
 func (wp *WorkerPool) run(j job) JobResult {
 	start := time.Now()
 	extractionContext := reqctx.WithRequestID(context.Background(), j.requestID)
@@ -129,8 +135,9 @@ func (wp *WorkerPool) run(j job) JobResult {
 	resp, err := wp.extractor.Extract(extractionContext, j.data)
 	duration := time.Since(start).Milliseconds()
 
-	// The PDF is unreachable from here on, so give its budget back before
-	// handing off the result: that lets the next burst in immediately.
+	// El PDF ya no es alcanzable desde aquí, así que devuelve su presupuesto
+	// antes de entregar el resultado: eso permite que la siguiente ráfaga entre
+	// de inmediato.
 	wp.budget.release(int64(len(j.data)))
 
 	if err != nil {
@@ -141,12 +148,12 @@ func (wp *WorkerPool) run(j job) JobResult {
 	return JobResult{Resp: resp}
 }
 
-// Submit enqueues data and returns the channel that carries its result. The
-// channel is buffered so a worker never blocks handing off, even if the caller
-// gave up waiting.
+// Submit encola data y devuelve el canal que transporta su resultado. El canal
+// está bufferizado para que un worker nunca se bloquee al entregar, incluso si
+// el llamador dejó de esperar.
 //
-// The job runs on its own context so a disconnected client does not cancel
-// work in flight.
+// El trabajo corre con su propio contexto para que un cliente desconectado no
+// cancele el trabajo en curso.
 func (wp *WorkerPool) Submit(ctx context.Context, data []byte) (chan JobResult, error) {
 	size := int64(len(data))
 
@@ -178,15 +185,16 @@ func (wp *WorkerPool) Submit(ctx context.Context, data []byte) (chan JobResult, 
 	}
 }
 
-// logRejection reports that a job could not be admitted. Both reasons mean the
-// same thing to the caller: this replica is saturated.
+// logRejection informa que un trabajo no pudo admitirse. Ambos motivos
+// significan lo mismo para el llamador: esta réplica está saturada.
 func (wp *WorkerPool) logRejection(ctx context.Context, size int64) {
 	logging.WithRequestID(ctx, wp.logger).Warn("queue full; rejecting job", "bytes", size)
 }
 
-// Wait blocks for a submitted job's result, or returns the context error if the
-// deadline passes first. The HTTP write timeout is what supplies that deadline,
-// so a client that walks away leaves the job queued instead of pinning a handler.
+// Wait espera el resultado de un trabajo enviado, o devuelve el error del
+// contexto si el deadline vence antes. El write timeout HTTP es el que aporta
+// ese deadline, así que un cliente que se marcha deja el trabajo en cola en
+// lugar de retener un handler.
 func (wp *WorkerPool) Wait(ctx context.Context, ch chan JobResult) (domain.ExtractResponse, error) {
 	select {
 	case res := <-ch:
@@ -196,19 +204,20 @@ func (wp *WorkerPool) Wait(ctx context.Context, ch chan JobResult) (domain.Extra
 	}
 }
 
-// Close stops accepting work and waits for the jobs already queued to finish.
+// Close deja de aceptar trabajo y espera a que terminen los trabajos ya
+// encolados.
 func (wp *WorkerPool) Close() {
 	_ = wp.CloseContext(context.Background())
 }
 
-// CloseContext stops accepting work and waits for the queued jobs to finish,
-// giving up when the context expires. A bounded drain keeps a stuck native call
-// from blocking the shutdown forever.
+// CloseContext deja de aceptar trabajo y espera a que terminen los trabajos
+// encolados, rindiéndose cuando el contexto vence. Un drenaje acotado evita que
+// una llamada nativa atascada bloquee el apagado para siempre.
 //
-// When the context expires the worker goroutine keeps running until the native
-// call returns: the job still holds its PDF in memory. That is deliberate —
-// the alternative is killing the process mid-conversion — and harmless here
-// because the caller is shutting the process down anyway.
+// Cuando el contexto vence, la goroutine del worker sigue ejecutándose hasta que
+// la llamada nativa retorna: el trabajo aún retiene su PDF en memoria. Eso es
+// deliberado —la alternativa es matar el proceso a mitad de conversión— e
+// inofensivo aquí porque el llamador está apagando el proceso de todos modos.
 func (wp *WorkerPool) CloseContext(ctx context.Context) error {
 	wp.mu.Lock()
 	if !wp.closed {

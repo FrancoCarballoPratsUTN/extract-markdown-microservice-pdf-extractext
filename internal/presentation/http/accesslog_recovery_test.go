@@ -14,8 +14,8 @@ import (
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/usecase"
 )
 
-// newRecordingLogger returns a logger that writes JSON records to the returned
-// buffer.
+// newRecordingLogger devuelve un logger que escribe registros JSON en el buffer
+// recibido.
 func newRecordingLogger(buffer *bytes.Buffer) *slog.Logger {
 	return logging.NewWithOptions(logging.Options{Level: slog.LevelDebug, Output: buffer})
 }
@@ -112,8 +112,8 @@ func TestRoutesCorrelatesRequestIDInResponseAndAccessLog(t *testing.T) {
 	}
 }
 
-// The access log is the audit trail of the service: it must record the
-// outcome of the request without ever echoing what the client sent.
+// El access log es la traza de auditoría del servicio: debe registrar el
+// resultado de la petición sin repetir nunca lo que envió el cliente.
 func TestWithRequestLogRecordsTheRequestOutcome(t *testing.T) {
 	var output bytes.Buffer
 	handler := withRequestLog(newRecordingLogger(&output))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -142,8 +142,8 @@ func TestWithRequestLogRecordsTheRequestOutcome(t *testing.T) {
 	}
 }
 
-// The level of the access log follows the status: a 5xx is our fault, a 4xx is
-// the caller's, and everything else is normal traffic.
+// El nivel del access log sigue al status: un 5xx es culpa nuestra, un 4xx del
+// llamador y el resto es tráfico normal.
 func TestAccessLogLevelFollowsStatus(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -175,8 +175,8 @@ func TestAccessLogLevelFollowsStatus(t *testing.T) {
 	}
 }
 
-// A panic is a defect, not a reason to lose the process: it becomes a 500 and
-// leaves a record with the stack.
+// Un panic es un defecto, no una razón para perder el proceso: se convierte en
+// un 500 y deja un registro con el stack.
 func TestWithRecoveryTurnsAPanicIntoA500(t *testing.T) {
 	var output bytes.Buffer
 	handler := withRecovery(newRecordingLogger(&output))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -202,8 +202,8 @@ func TestWithRecoveryTurnsAPanicIntoA500(t *testing.T) {
 	}
 }
 
-// A panic is also a request: it has to appear in the access log with its 500,
-// or the audit trail of the service would be missing exactly the failures.
+// Un panic también es una petición: tiene que aparecer en el access log con su
+// 500, o la traza de auditoría del servicio perdería justo los fallos.
 func TestAccessLogRecordsAPanickingRequest(t *testing.T) {
 	var output bytes.Buffer
 	logger := newRecordingLogger(&output)
@@ -225,8 +225,8 @@ func TestAccessLogRecordsAPanickingRequest(t *testing.T) {
 	}
 }
 
-// A response that already started cannot be rewritten: a second document would
-// leave the client with a corrupted body and a status that lies.
+// Una respuesta que ya empezó no se puede reescribir: un segundo documento
+// dejaría al cliente con un body corrupto y un status que miente.
 func TestRecoveryDoesNotCorruptAResponseThatAlreadyStarted(t *testing.T) {
 	var output bytes.Buffer
 	logger := newRecordingLogger(&output)
@@ -247,9 +247,9 @@ func TestRecoveryDoesNotCorruptAResponseThatAlreadyStarted(t *testing.T) {
 	}
 }
 
-// The panic value and the stack come from the process, not from a client, but
-// they still have to be bounded: a stack is kilobytes and a panic value can
-// carry the data that caused it.
+// El valor del panic y el stack vienen del proceso, no de un cliente, pero
+// igualmente deben acotarse: un stack son kilobytes y un valor de panic puede
+// llevar los datos que lo provocaron.
 func TestThePanicRecordBoundsTheValueAndTheStack(t *testing.T) {
 	var output bytes.Buffer
 	handler := withRecovery(newRecordingLogger(&output))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -269,8 +269,8 @@ func TestThePanicRecordBoundsTheValueAndTheStack(t *testing.T) {
 	}
 }
 
-// The health probe is consulted several times per second by the orchestrator:
-// logging it would bury the lines that matter.
+// El orquestador consulta la sonda de vida varias veces por segundo:
+// registrarla enterraría las líneas que importan.
 func TestAccessLogSkipsTheHealthProbe(t *testing.T) {
 	var output bytes.Buffer
 	handler := withRequestLog(newRecordingLogger(&output))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -284,12 +284,12 @@ func TestAccessLogSkipsTheHealthProbe(t *testing.T) {
 	}
 }
 
-// The whole point of the log is to be useful without being dangerous: the
-// content of the PDF must never reach stdout.
+// El sentido del log es ser útil sin ser peligroso: el contenido del PDF nunca
+// debe llegar a stdout.
 //
-// The test drives the real pipeline (pool, queued extractor, handler and
-// router) with an extractor that returns a recognisable string: a stub handler
-// would never put the document on the path that could leak it.
+// El test recorre el pipeline real (pool, extractor encolado, handler y router)
+// con un extractor que devuelve una cadena reconocible: un handler de prueba
+// nunca pondría el documento en el camino que podría filtrarlo.
 func TestThePipelineNeverLogsTheDocumentContent(t *testing.T) {
 	const secret = "SECRET-PDF-CONTENT"
 
@@ -313,8 +313,8 @@ func TestThePipelineNeverLogsTheDocumentContent(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
 	}
-	// The extraction really happened: without this assertion the test would
-	// pass even if the pipeline had been short-circuited.
+	// La extracción ocurrió de verdad: sin esta aserción el test pasaría incluso
+	// si el pipeline se hubiera cortocircuitado.
 	if !strings.Contains(rec.Body.String(), secret) {
 		t.Fatalf("the response has no extracted content: %s", rec.Body.String())
 	}
@@ -323,7 +323,7 @@ func TestThePipelineNeverLogsTheDocumentContent(t *testing.T) {
 	}
 }
 
-// secretExtractor returns a fixed content, whatever the document is.
+// secretExtractor devuelve un contenido fijo, sea cual sea el documento.
 type secretExtractor struct {
 	content string
 }

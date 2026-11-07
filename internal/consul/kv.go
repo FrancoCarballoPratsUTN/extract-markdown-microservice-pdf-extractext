@@ -16,6 +16,8 @@ import (
 
 const requestTimeout = 5 * time.Second
 
+// KVClient es un cliente mínimo de la API HTTP de Consul para leer el KV y
+// gestionar el registro del servicio.
 type KVClient struct {
 	baseURL string
 	token   string
@@ -27,6 +29,9 @@ type kvEntry struct {
 	Value string `json:"Value"`
 }
 
+// NewKVClient construye un cliente de Consul. Si client es nil, usa un cliente
+// HTTP con timeout para que un Consul colgado no bloquee el arranque ni el
+// apagado.
 func NewKVClient(baseURL, token string, client *http.Client) *KVClient {
 	if client == nil {
 		// Sin deadline, un Consul colgado puede bloquear el arranque o el
@@ -41,6 +46,8 @@ func NewKVClient(baseURL, token string, client *http.Client) *KVClient {
 	}
 }
 
+// NewKVClientWithCA construye un cliente que confía en la CA indicada para las
+// conexiones TLS con Consul. Una ruta vacía usa el cliente por defecto.
 func NewKVClientWithCA(baseURL, token, caFile string) (*KVClient, error) {
 	if caFile == "" {
 		return NewKVClient(baseURL, token, nil), nil
@@ -61,6 +68,8 @@ func NewKVClientWithCA(baseURL, token, caFile string) (*KVClient, error) {
 	}), nil
 }
 
+// LoadPrefix lee de forma recursiva todas las claves bajo prefix y devuelve un
+// mapa con las claves relativas al prefijo.
 func (c *KVClient) LoadPrefix(prefix string) (map[string]string, error) {
 	if strings.TrimSpace(prefix) == "" {
 		return nil, fmt.Errorf("consul KV prefix must not be empty")

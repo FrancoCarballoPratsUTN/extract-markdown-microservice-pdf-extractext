@@ -11,8 +11,8 @@ const maxRequestIDLength = 128
 
 type contextKey struct{}
 
-// EnsureRequestID returns a context containing candidate when it is valid,
-// otherwise it generates and stores a new request ID.
+// EnsureRequestID devuelve un contexto que contiene candidate cuando es válido;
+// en caso contrario, genera y almacena un nuevo request ID.
 func EnsureRequestID(ctx context.Context, candidate string) (context.Context, string) {
 	candidate = strings.TrimSpace(candidate)
 	if !IsValid(candidate) {
@@ -21,8 +21,8 @@ func EnsureRequestID(ctx context.Context, candidate string) (context.Context, st
 	return context.WithValue(ctx, contextKey{}, candidate), candidate
 }
 
-// WithRequestID returns a context containing requestID when it is valid after
-// trimming surrounding whitespace; invalid or empty IDs leave ctx unchanged.
+// WithRequestID devuelve un contexto que contiene requestID cuando es válido
+// tras recortar los espacios; un ID inválido o vacío deja ctx sin cambios.
 func WithRequestID(ctx context.Context, requestID string) context.Context {
 	requestID = strings.TrimSpace(requestID)
 	if !IsValid(requestID) {
@@ -31,15 +31,15 @@ func WithRequestID(ctx context.Context, requestID string) context.Context {
 	return context.WithValue(ctx, contextKey{}, requestID)
 }
 
-// RequestID returns the request ID stored in ctx, or an empty string when none
-// is present.
+// RequestID devuelve el request ID almacenado en ctx, o una cadena vacía si no
+// hay ninguno.
 func RequestID(ctx context.Context) string {
 	requestID, _ := ctx.Value(contextKey{}).(string)
 	return requestID
 }
 
-// IsValid reports whether requestID is non-empty, ASCII, non-control,
-// non-whitespace, and at most 128 bytes long.
+// IsValid indica si requestID no está vacío, es ASCII, no contiene caracteres
+// de control ni espacios y mide como máximo 128 bytes.
 func IsValid(requestID string) bool {
 	if requestID == "" || len(requestID) > maxRequestIDLength {
 		return false
@@ -52,7 +52,7 @@ func IsValid(requestID string) bool {
 	return true
 }
 
-// newRequestID generates a random opaque request ID.
+// newRequestID genera un request ID opaco y aleatorio.
 func newRequestID() string {
 	return rand.Text()
 }

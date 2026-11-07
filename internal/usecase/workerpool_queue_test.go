@@ -11,8 +11,9 @@ import (
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
 )
 
-// gatedExtractor blocks every extraction until gate closes, which lets a test
-// hold jobs in the pool and observe admission behaviour deterministically.
+// gatedExtractor bloquea cada extracción hasta que se cierra gate, lo que
+// permite a un test retener trabajos en el pool y observar el comportamiento de
+// admisión de forma determinista.
 type gatedExtractor struct {
 	gate chan struct{}
 }
@@ -26,9 +27,9 @@ func (g *gatedExtractor) Extract(ctx context.Context, data []byte) (domain.Extra
 	}
 }
 
-// newGatedPool returns a pool whose workers are all blocked on an unclosed gate,
-// an idempotent func that opens it, and a cleanup that always opens it before
-// Close waits for the workers.
+// newGatedPool devuelve un pool cuyos workers están bloqueados en una compuerta
+// sin abrir, una función idempotente que la abre y un cleanup que siempre la
+// abre antes de que Close espere a los workers.
 func newGatedPool(t *testing.T, workers, queueSize int, maxQueuedBytes int64) (*WorkerPool, func()) {
 	t.Helper()
 	gate := make(chan struct{})
@@ -50,8 +51,8 @@ func drain(t *testing.T, ch chan JobResult) {
 	}
 }
 
-// A burst larger than the worker count must wait in the queue instead of being
-// rejected: that is the whole reason the queue exists.
+// Una ráfaga mayor que el número de workers debe esperar en la cola en lugar de
+// ser rechazada: esa es toda la razón de ser de la cola.
 func TestWorkerPoolAbsorbsBurstBeyondWorkerCount(t *testing.T) {
 	wp, open := newGatedPool(t, 1, 8, 1<<20)
 
@@ -70,10 +71,11 @@ func TestWorkerPoolAbsorbsBurstBeyondWorkerCount(t *testing.T) {
 	}
 }
 
-// The byte budget is what keeps a queue of large PDFs inside the container's
-// memory limit, so it has to reject before the process is OOM-killed.
+// El presupuesto de bytes es lo que mantiene una cola de PDFs grandes dentro del
+// límite de memoria del contenedor, así que debe rechazar antes de que el
+// proceso muera por OOM.
 func TestWorkerPoolRejectsWhenByteBudgetExhausted(t *testing.T) {
-	wp, _ := newGatedPool(t, 1, 8, 16) // room for exactly two 8-byte payloads
+	wp, _ := newGatedPool(t, 1, 8, 16) // sitio para exactamente dos payloads de 8 bytes
 
 	if _, err := wp.Submit(context.Background(), make([]byte, 8)); err != nil {
 		t.Fatalf("first submit: %v", err)
@@ -88,8 +90,9 @@ func TestWorkerPoolRejectsWhenByteBudgetExhausted(t *testing.T) {
 	}
 }
 
-// Bytes belong to a job's lifetime, not to the queue's: a job that finished
-// extraction must hand its budget back or the service wedges after a while.
+// Los bytes pertenecen a la vida de un trabajo, no a la de la cola: un trabajo
+// que terminó la extracción debe devolver su presupuesto o el servicio se
+// atasca con el tiempo.
 func TestWorkerPoolReleasesBytesAfterExtraction(t *testing.T) {
 	wp, open := newGatedPool(t, 1, 8, 16)
 
@@ -105,8 +108,8 @@ func TestWorkerPoolReleasesBytesAfterExtraction(t *testing.T) {
 	}
 }
 
-// A client that gives up must not leave its handler blocked forever on a result
-// that nobody will read.
+// Un cliente que se rinde no debe dejar su handler bloqueado para siempre
+// esperando un resultado que nadie va a leer.
 func TestWorkerPoolExtractTimesOutInsteadOfHanging(t *testing.T) {
 	wp, _ := newGatedPool(t, 1, 8, 1<<20)
 

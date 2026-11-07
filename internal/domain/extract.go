@@ -9,6 +9,7 @@ var (
 	ErrExtractionFailed   = errors.New("extraction failed")
 )
 
+// ExtractResponse es la respuesta de una extracción correcta.
 type ExtractResponse struct {
 	Content   string `json:"content"`
 	PageCount int    `json:"page_count"`

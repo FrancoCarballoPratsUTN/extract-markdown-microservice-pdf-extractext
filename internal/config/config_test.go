@@ -126,9 +126,9 @@ func TestLoadFailsOnAPortOutsideTheValidRange(t *testing.T) {
 	}
 }
 
-// The byte budget is computed as mb << 20. Without an upper bound an absurd
-// value overflows the shift into a negative number of bytes, and every upload
-// would look empty.
+// El presupuesto en bytes se calcula como mb << 20. Sin un tope superior, un
+// valor absurdo desborda el desplazamiento a un número negativo de bytes y toda
+// subida parecería vacía.
 func TestLoadFailsOnAnUploadLimitAboveTheMaximum(t *testing.T) {
 	t.Setenv("MAX_UPLOAD_MB", "9000000000000")
 

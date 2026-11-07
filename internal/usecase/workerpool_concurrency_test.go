@@ -8,8 +8,8 @@ import (
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
 )
 
-// Each caller must receive the result of the job it submitted, never another
-// caller's result.
+// Cada llamador debe recibir el resultado del trabajo que envió, nunca el
+// resultado de otro llamador.
 func TestConcurrentSubmittersEachReceiveTheirOwnResult(t *testing.T) {
 	wp := NewWorkerPool(&slowExtractor{}, 4, 8, 1<<20, logging.Discard())
 	defer wp.Close()

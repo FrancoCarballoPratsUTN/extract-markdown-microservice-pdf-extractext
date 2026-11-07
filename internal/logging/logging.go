@@ -97,6 +97,7 @@ func ParseLevel(raw string) (slog.Level, error) {
 	}
 }
 
+// ValidateFormat comprueba que el formato del logger sea "json" o "text".
 func ValidateFormat(raw string) error {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "json", "text":

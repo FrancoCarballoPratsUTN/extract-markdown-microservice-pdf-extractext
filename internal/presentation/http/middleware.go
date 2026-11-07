@@ -20,6 +20,8 @@ type AdmissionMiddleware struct {
 	sem chan struct{}
 }
 
+// NewAdmissionMiddleware crea el middleware de admisión con el límite de
+// peticiones concurrentes indicado.
 func NewAdmissionMiddleware(maxConcurrent int) *AdmissionMiddleware {
 	if maxConcurrent <= 0 {
 		maxConcurrent = 1
@@ -29,6 +31,7 @@ func NewAdmissionMiddleware(maxConcurrent int) *AdmissionMiddleware {
 	}
 }
 
+// Middleware envuelve next y rechaza con 503 cuando el límite está alcanzado.
 func (m *AdmissionMiddleware) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -41,9 +44,10 @@ func (m *AdmissionMiddleware) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// WithDeadline gives every request a context deadline of timeout. A queued
-// extraction is bounded by that deadline instead of running until the client
-// disconnects, which keeps the queue draining predictably under saturation.
+// WithDeadline da a cada petición un deadline de contexto de timeout. Una
+// extracción en cola queda acotada por ese deadline en lugar de ejecutarse
+// hasta que el cliente se desconecte, lo que mantiene el drenaje de la cola
+// predecible bajo saturación.
 func WithDeadline(timeout time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

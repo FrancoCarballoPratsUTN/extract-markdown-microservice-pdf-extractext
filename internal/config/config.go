@@ -17,40 +17,42 @@ const (
 	defaultShutdownTimeout = 35
 	defaultMaxPages        = 1000
 
-	// maxUploadMB and maxQueueMB bound the megabyte values. The byte budget
-	// is computed as mb << 20, and an absurd value would overflow that shift
-	// into a negative number of bytes: every upload would look empty and
-	// every job would be refused.
+	// maxUploadMB y maxQueueMB acotan los valores en megabytes. El presupuesto
+	// en bytes se calcula como mb << 20, y un valor absurdo desbordaría ese
+	// desplazamiento a un número negativo de bytes: toda subida parecería vacía
+	// y todo trabajo sería rechazado.
 	maxUploadMB = 1024
 	maxQueueMB  = 1024
 )
 
-// Config is the effective configuration of the service. The business values
-// come from the environment or from the Consul KV; Consul holds the bootstrap
-// of that connection, always read from the process environment.
+// Config es la configuración efectiva del servicio. Los valores de negocio
+// provienen del entorno o del KV de Consul; Consul guarda el bootstrap de esa
+// conexión, que siempre se lee del entorno del proceso.
 type Config struct {
 	Port            string
 	MaxUploadMB     int
 	MaxWorkers      int
 	QueueSize       int
-	QueueMaxMB      int // byte budget shared by running and queued jobs
-	ReadTimeout     int // seconds
-	WriteTimeout    int // seconds
-	ShutdownTimeout int // seconds
-	MaxPages        int // per-document page cap; 0 disables the limit
+	QueueMaxMB      int // presupuesto en bytes compartido por trabajos en curso y en cola
+	ReadTimeout     int // segundos
+	WriteTimeout    int // segundos
+	ShutdownTimeout int // segundos
+	MaxPages        int // tope de páginas por documento; 0 desactiva el límite
 	Consul          ConsulConfig
 }
 
-// Load reads the configuration from the environment.
+// Load lee la configuración del entorno.
 //
-// An invalid value is an error, not a fallback: a service that quietly starts
-// with a configuration nobody asked for hides the misconfiguration until it
-// surfaces as a strange behaviour under load. The default only applies when
-// the variable is absent.
+// Un valor inválido es un error, no un fallback: un servicio que arranca en
+// silencio con una configuración que nadie pidió oculta la mala configuración
+// hasta que aparece como un comportamiento extraño bajo carga. El default sólo
+// se aplica cuando la variable está ausente.
 func Load() (Config, error) {
 	return load(os.Getenv)
 }
 
+// LoadFromValues lee la configuración de un mapa de valores, como el que
+// devuelve el KV de Consul. Aplica las mismas reglas y defaults que Load.
 func LoadFromValues(values map[string]string) (Config, error) {
 	return load(func(key string) string {
 		return values[key]
@@ -69,7 +71,7 @@ func load(getenv func(string) string) (Config, error) {
 		target   *int
 		fallback int
 		min      int
-		max      int // 0 means no upper bound
+		max      int // 0 significa sin tope superior
 	}{
 		{"MAX_UPLOAD_MB", &cfg.MaxUploadMB, defaultMaxUploadMB, 1, maxUploadMB},
 		{"MAX_WORKERS", &cfg.MaxWorkers, defaultMaxWorkers, 1, 0},
@@ -91,8 +93,9 @@ func load(getenv func(string) string) (Config, error) {
 	return cfg, nil
 }
 
-// setPort reads the listening port. It must be a valid TCP port: an
-// unusable value would otherwise surface as a cryptic bind error at boot.
+// setPort lee el puerto de escucha. Debe ser un puerto TCP válido: un valor
+// inutilizable aparecería de otro modo como un error críptico de bind al
+// arrancar.
 func setPort(cfg *Config, getenv func(string) string) error {
 	raw := getenv("PORT")
 	if raw == "" {
@@ -111,10 +114,9 @@ func setPort(cfg *Config, getenv func(string) string) error {
 	return nil
 }
 
-// envInt reads an integer from the environment. An absent variable falls back
-// to the default; a value that is not an integer, that is below the minimum, or
-// that is above the maximum, aborts the startup. A maximum of 0 means there is
-// no upper bound.
+// envInt lee un entero del entorno. Una variable ausente usa el default; un
+// valor que no sea entero, que esté por debajo del mínimo o por encima del
+// máximo aborta el arranque. Un máximo de 0 significa que no hay tope superior.
 func envInt(getenv func(string) string, name string, fallback, min, max int) (int, error) {
 	raw := getenv(name)
 	if raw == "" {

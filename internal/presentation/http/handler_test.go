@@ -76,8 +76,9 @@ func TestExtractHandlerSuccessRawPDF(t *testing.T) {
 	}
 }
 
-// The same document must get the same answer whichever Content-Type carries it:
-// the multipart envelope is not part of the payload budget.
+// El mismo documento debe obtener la misma respuesta con cualquier
+// Content-Type que lo transporte: el envoltorio multipart no forma parte del
+// presupuesto del payload.
 func TestExtractHandlerAcceptsMultipartPDFExactlyAtTheLimit(t *testing.T) {
 	const limit = 4096
 	body, contentType := multipartBodyWithPDF(t, limit, 0)
@@ -98,9 +99,9 @@ func TestExtractHandlerAcceptsMultipartPDFExactlyAtTheLimit(t *testing.T) {
 	}
 }
 
-// An oversized multipart document is a 413, not a 400 "could not read request
-// body": the client has to know that the file is too big, not that the upload
-// broke.
+// Un documento multipart demasiado grande es un 413, no un 400 "could not read
+// request body": el cliente tiene que saber que el fichero es demasiado grande,
+// no que la subida se rompió.
 func TestExtractHandlerMultipartPDFAboveTheLimitReturns413(t *testing.T) {
 	const limit = 4096
 	body, contentType := multipartBodyWithPDF(t, limit+1, 0)
@@ -268,8 +269,8 @@ func TestRoutesReturnsProblemForAnUnknownPath(t *testing.T) {
 	}
 }
 
-// A body that breaks halfway is a bad request, not a missing file: the client
-// has to know that it has to resend the document.
+// Un body que se rompe a mitad es un bad request, no un fichero ausente: el
+// cliente tiene que saber que debe reenviar el documento.
 func TestExtractHandlerUnreadableBodyReturns400RFC9457(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/extract", failingReader{})
 	req.Header.Set("Content-Type", "application/pdf")

@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-// decodeLogLine decodes a single JSON log record from the buffer. It fails the
-// test if the buffer is empty or not a valid single JSON object.
+// decodeLogLine decodifica un único registro JSON del buffer. Falla el test si
+// el buffer está vacío o no es un único objeto JSON válido.
 //
-// It lives in an untagged file so every test of this package can use it,
-// tagged or not.
+// Vive en un fichero sin tags para que todos los tests de este paquete puedan
+// usarlo, tengan tags o no.
 func decodeLogLine(t *testing.T, raw []byte) map[string]any {
 	t.Helper()
 
@@ -25,9 +25,9 @@ func decodeLogLine(t *testing.T, raw []byte) map[string]any {
 	return record
 }
 
-// decodeLogLines decodes every JSON record of the buffer. A single request can
-// produce more than one line: the panic record and the access log line, for
-// instance.
+// decodeLogLines decodifica todos los registros JSON del buffer. Una sola
+// petición puede producir más de una línea: el registro del panic y la línea
+// del access log, por ejemplo.
 func decodeLogLines(t *testing.T, raw []byte) []map[string]any {
 	t.Helper()
 
@@ -48,8 +48,8 @@ func decodeLogLines(t *testing.T, raw []byte) []map[string]any {
 	return records
 }
 
-// findLogRecord returns the record with the given message, failing the test if
-// there is none.
+// findLogRecord devuelve el registro con el mensaje dado y falla el test si no
+// existe.
 func findLogRecord(t *testing.T, records []map[string]any, msg string) map[string]any {
 	t.Helper()
 

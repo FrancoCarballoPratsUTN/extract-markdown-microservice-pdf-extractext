@@ -10,7 +10,7 @@ import (
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/domain"
 )
 
-// ExtractUsecase is the port consumed by the HTTP layer.
+// ExtractUsecase es el puerto que consume la capa HTTP.
 type ExtractUsecase interface {
 	Extract(ctx context.Context, data []byte) (domain.ExtractResponse, error)
 }
@@ -22,6 +22,8 @@ type Handler struct {
 	logger   *slog.Logger
 }
 
+// NewHandler construye el handler de extracción con el límite de subida en
+// megabytes indicado.
 func NewHandler(uc ExtractUsecase, maxUploadMB int, logger *slog.Logger) *Handler {
 	return &Handler{
 		uc:       uc,

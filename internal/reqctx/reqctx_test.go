@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// Current rand.Text length; this is a minimum contract, not a stable format.
+// Longitud actual de rand.Text; es un contrato mínimo, no un formato estable.
 const wantGeneratedIDLength = 26
 
 func TestEnsureRequestIDKeepsValidValue(t *testing.T) {

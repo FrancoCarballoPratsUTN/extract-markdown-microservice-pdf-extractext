@@ -14,25 +14,25 @@ import (
 	pdfoxide "github.com/yfedoseev/pdf_oxide/go"
 )
 
-// document is the read-side view of an opened PDF the extractor needs.
+// document es la vista de lectura de un PDF abierto que necesita el extractor.
 type document interface {
 	PageCount() (int, error)
-	// ToMarkdownAll is the engine's own Markdown converter.
+	// ToMarkdownAll es el conversor a Markdown propio del motor.
 	ToMarkdownAll() (string, error)
 	Close() error
 }
 
-// extractor adapts the pdf_oxide Go binding to the usecase.Extractor port.
-// The concrete type is unexported so the business layer depends on the port it
-// declares rather than on this package.
+// extractor adapta el binding Go de pdf_oxide al puerto usecase.Extractor.
+// El tipo concreto es no exportado para que la capa de negocio dependa del
+// puerto que declara y no de este paquete.
 type extractor struct {
 	maxPages int
 	logger   *slog.Logger
 	open     func([]byte) (document, error)
 }
 
-// NewExtractor returns the pdf_oxide-backed adapter. A maxPages of 0 disables
-// the per-document page limit.
+// NewExtractor devuelve el adaptador basado en pdf_oxide. Un maxPages de 0
+// desactiva el límite de páginas por documento.
 func NewExtractor(maxPages int, logger *slog.Logger) *extractor {
 	return &extractor{
 		maxPages: maxPages,
@@ -43,11 +43,11 @@ func NewExtractor(maxPages int, logger *slog.Logger) *extractor {
 	}
 }
 
-// log returns the extractor logger.
+// log devuelve el logger del extractor.
 //
-// It never returns nil: the panic handler below depends on it, y un logger
-// nulo convertiría un panic recuperado en un segundo panic, que es justo lo
-// que el recovery existe para evitar.
+// Nunca devuelve nil: el manejador de panic de abajo depende de ello, y un
+// logger nulo convertiría un panic recuperado en un segundo panic, que es justo
+// lo que el recovery existe para evitar.
 func (e *extractor) log(ctx context.Context) *slog.Logger {
 	if e.logger == nil {
 		return slog.Default()
@@ -55,10 +55,11 @@ func (e *extractor) log(ctx context.Context) *slog.Logger {
 	return logging.WithRequestID(ctx, e.logger)
 }
 
-// Extract converts a PDF payload into Markdown via the engine's own
-// ToMarkdownAll. ctx is part of the port only: the native conversion cannot be
-// cancelled mid-call and the worker pool runs it with context.Background(), so
-// admission control and request deadlines upstream bound how long callers wait.
+// Extract convierte un payload PDF en Markdown mediante ToMarkdownAll del
+// propio motor. ctx forma parte del puerto sólo por la firma: la conversión
+// nativa no se puede cancelar a mitad de llamada y el pool de workers la
+// ejecuta con context.Background(), así que el control de admisión y los
+// deadlines de las peticiones aguas arriba acotan cuánto esperan los llamadores.
 func (e *extractor) Extract(ctx context.Context, data []byte) (content string, pages int, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -97,8 +98,9 @@ func (e *extractor) Extract(ctx context.Context, data []byte) (content string, p
 	return sanitize(content), pages, nil
 }
 
-// mapOpenError translates pdf_oxide open failures into domain errors: an
-// unparseable payload is the caller's fault, anything else is ours.
+// mapOpenError traduce los fallos de apertura de pdf_oxide a errores de
+// dominio: un payload no parseable es culpa del llamador; cualquier otra cosa
+// es nuestra.
 func mapOpenError(err error) error {
 	switch {
 	case errors.Is(err, pdfoxide.ErrInvalidFormat),
@@ -111,9 +113,10 @@ func mapOpenError(err error) error {
 	}
 }
 
-// sanitize normalizes the engine output so clients always receive plain
-// LF-terminated Markdown: PDF extraction can emit bare CRs and control
-// characters, and documents may end in stray whitespace.
+// sanitize normaliza la salida del motor para que los clientes reciban siempre
+// Markdown plano terminado en LF: la extracción de PDF puede emitir CRs sueltos
+// y caracteres de control, y los documentos pueden terminar con espacios
+// sobrantes.
 func sanitize(markdown string) string {
 	withLF := strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(markdown)
 

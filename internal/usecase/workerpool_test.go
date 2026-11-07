@@ -39,26 +39,18 @@ func TestWorkerPoolProcessesJob(t *testing.T) {
 	}
 }
 
-// Queue-full behaviour is covered by TestWorkerPoolQueueFullWhenNoSpace.
-
 func TestWorkerPoolQueueFullWhenNoSpace(t *testing.T) {
-	// workers 1, queue 1 - fill both: 1 job processing + 1 queued = full
 	wp := NewWorkerPool(&slowExtractor{}, 1, 1, 1<<20, logging.Discard())
 	defer wp.Close()
 
-	// First job: sent to buffer/worker
 	if _, err := wp.Submit(context.Background(), []byte("a")); err != nil {
 		t.Fatalf("1: %v", err)
 	}
-	// Give worker time to start and be busy
 	time.Sleep(5 * time.Millisecond)
-	// Second job should fit in queue buffer (size 1) while worker is busy
 	if _, err := wp.Submit(context.Background(), []byte("b")); err != nil {
 		t.Fatalf("2: %v", err)
 	}
-	// Give a bit more to ensure worker stays busy
 	time.Sleep(5 * time.Millisecond)
-	// Third job: buffer full and worker busy -> should be full
 	_, err := wp.Submit(context.Background(), []byte("c"))
 	if !errors.Is(err, ErrQueueFull) {
 		t.Fatalf("expected queue full, got %v", err)

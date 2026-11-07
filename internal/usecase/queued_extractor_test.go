@@ -27,8 +27,8 @@ func TestQueuedExtractorReturnsTheExtractedDocument(t *testing.T) {
 	}
 }
 
-// signallingExtractor reports that a worker picked the job up before blocking,
-// so a test can fill the queue without racing the pool.
+// signallingExtractor avisa de que un worker tomó el trabajo antes de
+// bloquearse, para que un test pueda llenar la cola sin competir con el pool.
 type signallingExtractor struct {
 	gate    chan struct{}
 	started chan struct{}
@@ -48,25 +48,26 @@ func (s *signallingExtractor) Extract(ctx context.Context, data []byte) (domain.
 	}
 }
 
-// A full queue is a saturation signal, not a client mistake, so it has to reach
-// the client as 503 and not as a generic 500.
+// Una cola llena es una señal de saturación, no un error del cliente, así que
+// debe llegar al cliente como 503 y no como un 500 genérico.
 func TestQueuedExtractorReportsAFullQueueAsServiceUnavailable(t *testing.T) {
 	gate := make(chan struct{})
-	// Buffered so a worker taking a later job cannot block on the send and
-	// deadlock Close; the test only needs the first signal.
+	// Bufferizado para que un worker que tome un trabajo posterior no se bloquee
+	// en el envío y bloquee Close; el test sólo necesita la primera señal.
 	extractor := &signallingExtractor{gate: gate, started: make(chan struct{}, 4)}
 	wp := NewWorkerPool(extractor, 1, 1, 1<<20, logging.Discard())
 	t.Cleanup(wp.Close)
 
-	// The blocker occupies the worker; waiting for the signal is what makes the
-	// queue slot free for the filler deterministically.
+	// El bloqueante ocupa al worker; esperar la señal es lo que deja libre el
+	// sitio de la cola para el relleno de forma determinista.
 	blocker, err := wp.Submit(context.Background(), []byte("bloqueante"))
 	if err != nil {
 		t.Fatalf("submit blocker: %v", err)
 	}
 	t.Cleanup(func() { drain(t, blocker) })
-	// Registered last so t.Cleanup's LIFO order opens the gate before the
-	// drain and Close, which would otherwise wait forever on the blocked worker.
+	// Registrado al final para que el orden LIFO de t.Cleanup abra la compuerta
+	// antes del drenaje y de Close, que de otro modo esperarían para siempre al
+	// worker bloqueado.
 	t.Cleanup(func() { close(gate) })
 
 	select {
@@ -85,8 +86,8 @@ func TestQueuedExtractorReportsAFullQueueAsServiceUnavailable(t *testing.T) {
 	}
 }
 
-// A pool that is shutting down refuses the work instead of running it: the
-// client has to see a 503 it can retry elsewhere, not a 500.
+// Un pool que se está apagando rechaza el trabajo en lugar de ejecutarlo: el
+// cliente debe ver un 503 al que pueda reintentar en otro sitio, no un 500.
 func TestQueuedExtractorReportsAClosedPoolAsServiceUnavailable(t *testing.T) {
 	wp := NewWorkerPool(NewExtractUsecase(&mockExtractor{}), 1, 1, 1<<20, logging.Discard())
 	wp.Close()
@@ -97,8 +98,8 @@ func TestQueuedExtractorReportsAClosedPoolAsServiceUnavailable(t *testing.T) {
 	}
 }
 
-// A job that never finishes within the request deadline has to surface as 503:
-// the client should retry elsewhere, not receive a 500.
+// Un trabajo que no termina dentro del deadline de la petición debe salir como
+// 503: el cliente debería reintentar en otro sitio, no recibir un 500.
 func TestQueuedExtractorReportsAnExpiredDeadlineAsServiceUnavailable(t *testing.T) {
 	gate := make(chan struct{})
 	wp := NewWorkerPool(&gatedExtractor{gate: gate}, 1, 4, 1<<20, logging.Discard())

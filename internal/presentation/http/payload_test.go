@@ -37,9 +37,10 @@ func TestReadPDFPayloadFromMultipartFileField(t *testing.T) {
 	}
 }
 
-// multipartBodyWithPDF builds a multipart body whose "file" part holds pdfSize
-// bytes. A trailingSize above zero appends a non-file field after the document,
-// which is what exercises the body cap rather than the part cap.
+// multipartBodyWithPDF construye un body multipart cuya parte "file" contiene
+// pdfSize bytes. Un trailingSize mayor que cero añade un campo que no es fichero
+// después del documento, que es lo que ejercita el tope del body y no el de la
+// parte.
 func multipartBodyWithPDF(t *testing.T, pdfSize, trailingSize int) (*bytes.Buffer, string) {
 	t.Helper()
 
@@ -63,8 +64,9 @@ func multipartBodyWithPDF(t *testing.T, pdfSize, trailingSize int) (*bytes.Buffe
 	return body, writer.FormDataContentType()
 }
 
-// A PDF of exactly the configured limit must be accepted whichever Content-Type
-// carries it: the multipart envelope is not part of the document.
+// Un PDF de exactamente el límite configurado debe aceptarse con cualquier
+// Content-Type que lo transporte: el envoltorio multipart no forma parte del
+// documento.
 func TestReadPDFPayloadAcceptsMultipartPDFExactlyAtTheLimit(t *testing.T) {
 	const limit = 4096
 	body, contentType := multipartBodyWithPDF(t, limit, 0)
@@ -81,7 +83,7 @@ func TestReadPDFPayloadAcceptsMultipartPDFExactlyAtTheLimit(t *testing.T) {
 	}
 }
 
-// The document cap still applies to the file part itself.
+// El tope del documento sigue aplicándose a la propia parte del fichero.
 func TestReadPDFPayloadRejectsMultipartPDFAboveTheLimit(t *testing.T) {
 	const limit = 4096
 	body, contentType := multipartBodyWithPDF(t, limit+1, 0)
@@ -95,8 +97,9 @@ func TestReadPDFPayloadRejectsMultipartPDFAboveTheLimit(t *testing.T) {
 	}
 }
 
-// The body has its own, larger cap: the envelope allowance must not turn into
-// an unbounded read of a multipart part that is not the document.
+// El body tiene su propio tope, mayor: el margen del envoltorio no debe
+// convertirse en una lectura sin límite de una parte multipart que no es el
+// documento.
 func TestReadPDFPayloadRejectsMultipartBodyAboveTheLimit(t *testing.T) {
 	const limit = 1024
 	body, contentType := multipartBodyWithPDF(t, 8, limit+multipartOverheadAllowance+1)
@@ -110,8 +113,9 @@ func TestReadPDFPayloadRejectsMultipartBodyAboveTheLimit(t *testing.T) {
 	}
 }
 
-// A huge non-file field placed before the document must be a 413 while the
-// multipart reader is still parsing parts, not a 400 "missing pdf file".
+// Un campo enorme que no es fichero, colocado antes del documento, debe ser un
+// 413 mientras el lector multipart sigue parseando partes, no un 400 "missing
+// pdf file".
 func TestReadPDFPayloadRejectsMultipartBodyAboveTheLimitBeforeTheFile(t *testing.T) {
 	const limit = 1024
 	body := &bytes.Buffer{}
@@ -139,8 +143,8 @@ func TestReadPDFPayloadRejectsMultipartBodyAboveTheLimitBeforeTheFile(t *testing
 	}
 }
 
-// brokenAfterReader serves its whole payload once and then fails, simulating a
-// connection that drops after the file part was received.
+// brokenAfterReader sirve todo su payload una vez y luego falla, simulando una
+// conexión que se corta después de recibir la parte del fichero.
 type brokenAfterReader struct {
 	data []byte
 }
@@ -154,8 +158,8 @@ func (b *brokenAfterReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// A body that breaks after the file part is a transport failure, not a missing
-// file and not an oversized payload.
+// Un body que se rompe después de la parte del fichero es un fallo de
+// transporte, no un fichero ausente ni un payload demasiado grande.
 func TestReadPDFPayloadReportsATruncatedMultipartBody(t *testing.T) {
 	body, contentType := multipartBodyWithPDF(t, 16, 0)
 	req := httptest.NewRequest(http.MethodPost, "/extract", &brokenAfterReader{data: body.Bytes()})
@@ -296,15 +300,15 @@ func TestReadPDFPayloadRejectsMultipartWithoutBoundary(t *testing.T) {
 	}
 }
 
-// failingReader breaks the transport halfway through the body.
+// failingReader rompe el transporte a mitad del body.
 type failingReader struct{}
 
 func (failingReader) Read([]byte) (int, error) {
 	return 0, errors.New("connection reset by peer")
 }
 
-// A body that cannot be read to the end is a transport failure, not a request
-// without a file: the two deserve different answers.
+// Un body que no se puede leer hasta el final es un fallo de transporte, no una
+// petición sin fichero: los dos merecen respuestas distintas.
 func TestReadPDFPayloadReportsAnUnreadableBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/extract", failingReader{})
 	req.Header.Set("Content-Type", "application/pdf")

@@ -12,9 +12,9 @@ import (
 const (
 	pdfFormField = "file"
 
-	// multipartOverheadAllowance covers boundaries, part headers and the
-	// closing delimiter. Without it, a PDF of exactly maxBytes would be
-	// rejected just because of the multipart envelope.
+	// multipartOverheadAllowance cubre los boundaries, las cabeceras de parte y
+	// el delimitador de cierre. Sin ello, un PDF de exactamente maxBytes sería
+	// rechazado sólo por el envoltorio multipart.
 	multipartOverheadAllowance = 8 << 10
 )
 
@@ -22,14 +22,14 @@ var (
 	ErrMissingFile          = errors.New("missing pdf file")
 	ErrPayloadTooLarge      = errors.New("payload too large")
 	ErrUnsupportedMediaType = errors.New("unsupported media type")
-	// ErrUnreadableBody means the body could not be read to the end. It is
-	// distinct from ErrMissingFile: a truncated upload is a transport
-	// problem, not a request without a file.
+	// ErrUnreadableBody indica que el body no se pudo leer hasta el final. Es
+	// distinto de ErrMissingFile: una subida truncada es un problema de
+	// transporte, no una petición sin fichero.
 	ErrUnreadableBody = errors.New("could not read request body")
 )
 
-// readPDFPayload extracts the PDF bytes from the request, accepting either a
-// multipart/form-data upload on the "file" field or a raw binary body.
+// readPDFPayload extrae los bytes del PDF de la petición, aceptando tanto una
+// subida multipart/form-data en el campo "file" como un body binario crudo.
 func readPDFPayload(r *http.Request, maxBytes int64) ([]byte, error) {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil {
@@ -46,13 +46,13 @@ func readPDFPayload(r *http.Request, maxBytes int64) ([]byte, error) {
 	}
 }
 
-// readMultipartPDF extracts the "file" part, bounded by maxPartBytes, and
-// requires the whole body to fit in maxBodyBytes. The body cap is larger
-// because the multipart envelope (boundaries and part headers) is not part of
-// the document.
+// readMultipartPDF extrae la parte "file", acotada por maxPartBytes, y exige
+// que el body completo quepa en maxBodyBytes. El tope del body es mayor porque
+// el envoltorio multipart (boundaries y cabeceras de parte) no forma parte del
+// documento.
 func readMultipartPDF(r *http.Request, maxPartBytes, maxBodyBytes int64) ([]byte, error) {
-	// nil is safe: MaxBytesReader only type-asserts the writer to flag the
-	// connection to net/http. The 413 is written by the handler.
+	// nil es seguro: MaxBytesReader sólo hace un type assertion del writer para
+	// marcar la conexión a net/http. El handler escribe el 413.
 	r.Body = http.MaxBytesReader(nil, r.Body, maxBodyBytes)
 
 	reader, err := r.MultipartReader()
@@ -69,8 +69,8 @@ func readMultipartPDF(r *http.Request, maxPartBytes, maxBodyBytes int64) ([]byte
 	return data, nil
 }
 
-// readFilePart returns the bytes of the first part named "file" that carries a
-// filename. Other parts are skipped.
+// readFilePart devuelve los bytes de la primera parte llamada "file" que tenga
+// nombre de fichero. Las demás partes se omiten.
 func readFilePart(reader *multipart.Reader, maxPartBytes int64) ([]byte, error) {
 	for {
 		part, err := reader.NextPart()
@@ -95,8 +95,8 @@ func readFilePart(reader *multipart.Reader, maxPartBytes int64) ([]byte, error) 
 	}
 }
 
-// ensureBodyConsumed drains the rest of the request so an oversized body is
-// reported as such instead of being silently ignored.
+// ensureBodyConsumed drena el resto de la petición para que un body demasiado
+// grande se reporte como tal en lugar de ignorarse en silencio.
 func ensureBodyConsumed(body io.Reader) error {
 	if _, err := io.Copy(io.Discard, body); err != nil {
 		if isPayloadTooLarge(err) {
@@ -112,8 +112,8 @@ func isPayloadTooLarge(err error) bool {
 	return errors.As(err, &maxBytesError)
 }
 
-// readLimited reads at most maxBytes, reporting ErrPayloadTooLarge when the
-// reader holds more data than allowed.
+// readLimited lee como máximo maxBytes y devuelve ErrPayloadTooLarge cuando el
+// reader contiene más datos de los permitidos.
 func readLimited(r io.Reader, maxBytes int64) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(r, maxBytes+1))
 	if err != nil {

@@ -21,14 +21,14 @@ import (
 	"github.com/francocp12/extract-markdown-microservice-pdf-extractext/internal/logging"
 )
 
-// fakeExtractor answers immediately with a fixed Markdown.
+// fakeExtractor responde de inmediato con un Markdown fijo.
 type fakeExtractor struct{}
 
 func (f *fakeExtractor) Extract(ctx context.Context, data []byte) (string, int, error) {
 	return "# markdown", 1, nil
 }
 
-// blockingExtractor never returns until its gate is opened.
+// blockingExtractor no retorna hasta que se abre su compuerta.
 type blockingExtractor struct {
 	gate chan struct{}
 }
@@ -38,7 +38,7 @@ func (b *blockingExtractor) Extract(ctx context.Context, data []byte) (string, i
 	return "# markdown", 1, nil
 }
 
-// testConfig is a configuration the server can actually run.
+// testConfig es una configuración con la que el servidor puede arrancar.
 func testConfig() config.Config {
 	return config.Config{
 		Port:            "0",
@@ -53,8 +53,8 @@ func testConfig() config.Config {
 	}
 }
 
-// freePort reserves a port and gives it back, so the test can reach the
-// server it just started.
+// freePort reserva un puerto y lo libera, para que el test pueda alcanzar el
+// servidor que acaba de arrancar.
 func freePort(t *testing.T) string {
 	t.Helper()
 
@@ -69,7 +69,7 @@ func freePort(t *testing.T) string {
 	return strconv.Itoa(port)
 }
 
-// waitForServer blocks until the server answers the health probe.
+// waitForServer bloquea hasta que el servidor responde a la sonda de vida.
 func waitForServer(t *testing.T, port string) {
 	t.Helper()
 
@@ -85,8 +85,8 @@ func waitForServer(t *testing.T, port string) {
 	t.Fatal("the server never answered the health probe")
 }
 
-// A signal has to stop the server, drain the pool and leave with no error:
-// that is the whole shutdown contract.
+// Una señal debe detener el servidor, drenar el pool y terminar sin error:
+// ese es todo el contrato de apagado.
 func TestServeShutsDownWhenTheSignalArrives(t *testing.T) {
 	var output bytes.Buffer
 	logger := logging.NewWithOptions(logging.Options{Level: slog.LevelDebug, Output: &output})
@@ -109,8 +109,8 @@ func TestServeShutsDownWhenTheSignalArrives(t *testing.T) {
 	}
 }
 
-// A worker stuck in a native call must not keep the shutdown waiting past the
-// configured budget: the process has to exit and say why.
+// Un worker atascado en una llamada nativa no debe mantener el apagado más
+// allá del presupuesto configurado: el proceso tiene que salir y decir por qué.
 func TestServeGivesUpWhenThePoolDoesNotDrain(t *testing.T) {
 	var output bytes.Buffer
 	logger := logging.NewWithOptions(logging.Options{Level: slog.LevelDebug, Output: &output})
@@ -130,7 +130,7 @@ func TestServeGivesUpWhenThePoolDoesNotDrain(t *testing.T) {
 
 	waitForServer(t, cfg.Port)
 
-	// The request leaves a job stuck in the extractor: the pool cannot drain.
+	// La petición deja un trabajo atascado en el extractor: el pool no puede drenar.
 	request, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:"+cfg.Port+"/extract", strings.NewReader("%PDF-1.7"))
 	if err != nil {
 		t.Fatalf("could not build the request: %v", err)
@@ -143,7 +143,7 @@ func TestServeGivesUpWhenThePoolDoesNotDrain(t *testing.T) {
 		}
 	}()
 
-	// Give the worker time to pick the job up before asking for the shutdown.
+	// Dar tiempo al worker para tomar el trabajo antes de pedir el apagado.
 	time.Sleep(100 * time.Millisecond)
 	stopCh <- syscall.SIGTERM
 
@@ -164,7 +164,7 @@ func TestServeGivesUpWhenThePoolDoesNotDrain(t *testing.T) {
 	}
 }
 
-// The server has to answer the health probe used by the orchestrator and Consul.
+// El servidor tiene que responder a la sonda de vida que usan el orquestador y Consul.
 func TestServeAnswersTheHealthProbe(t *testing.T) {
 	logger := logging.NewWithOptions(logging.Options{Level: slog.LevelDebug, Output: &bytes.Buffer{}})
 
