@@ -66,7 +66,6 @@ func TestExtractRejectsEmptyPayloadWithoutOpeningDocument(t *testing.T) {
 func TestExtractMapsOpenSentinelsToInvalidPDF(t *testing.T) {
 	sentinels := map[string]error{
 		"invalid format":     pdfoxide.ErrInvalidFormat,
-		"parse error":        pdfoxide.ErrParseError,
 		"document not found": pdfoxide.ErrDocumentNotFound,
 		"invalid path":       pdfoxide.ErrInvalidPath,
 	}

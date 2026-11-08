@@ -104,7 +104,6 @@ func (e *extractor) Extract(ctx context.Context, data []byte) (content string, p
 func mapOpenError(err error) error {
 	switch {
 	case errors.Is(err, pdfoxide.ErrInvalidFormat),
-		errors.Is(err, pdfoxide.ErrParseError),
 		errors.Is(err, pdfoxide.ErrDocumentNotFound),
 		errors.Is(err, pdfoxide.ErrInvalidPath):
 		return domain.ErrInvalidPDF
