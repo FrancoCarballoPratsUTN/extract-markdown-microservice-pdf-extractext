@@ -45,16 +45,27 @@ curl -X POST --data-binary @tests/stress/pdfs/2020-Scrum-Guide-Spanish-Latin-Sou
   -H "Content-Type: application/pdf" http://127.0.0.1:8080/extract
 ```
 
-## CVE-2025-60876 y el healthcheck
+## Imagen runtime, hardening y CVEs
 
-La imagen runtime usa `gcr.io/distroless/base-debian13`, fijada al digest
-`sha256:9039a88709bcc2bacf5a2faac331d65dd6840f763f225ad9594cc0c67bcd0fba`.
-El `Dockerfile` fija explícitamente `USER 65532:65532`, que es la garantía
-efectiva de ejecución no privilegiada; el digest no se asume como `:nonroot`.
-No incluye `wget` ni un `HEALTHCHECK` interno. Alpine 3.24.3 fue descartada
-porque `pdf_oxide` requiere símbolos `glibc` hasta `GLIBC_2.35` y `gcompat`
-no permite cargar la biblioteca nativa. Las sondas externas pueden consultar
-`/healthz` y el proceso mantiene `USER 65532:65532`.
+La imagen runtime usa `cgr.dev/chainguard/glibc-dynamic` (Wolfi/glibc), fijada
+por digest en el `Dockerfile` (actual:
+`sha256:aab5cd0b4cc5edd9c87b6e7aa9ddaa3fb6ffcec559b9e5473c55bbc937b65399`).
+Se eligió una base con glibc porque `libpdf_oxide.so` se carga por `dlopen` y
+requiere símbolos glibc (Alpine/musl fue descartada: `gcompat` no permite
+cargar la biblioteca). La imagen no incluye shell ni gestor de paquetes, y el
+`Dockerfile` fija `USER 65532:65532`. No hay `HEALTHCHECK` interno ni `wget`;
+las sondas externas/Traefik/Consul consultan `/healthz`.
+
+**Riesgo aceptado — CVE-2026-84243 (High, `glibc 2.44-r14` en la base):** al
+momento de esta nota, el scan de la imagen runtime reporta `CVE-2026-84243` en
+`glibc` del paquete base (Wolfi/apk). No es un defecto del código Go del
+servicio (`CGO_ENABLED=0`), pero sí afecta al proceso porque `libpdf_oxide.so`
+depende de la glibc de la imagen en runtime. Se acepta mientras no exista un
+digest actualizado de `glibc-dynamic` con el fix; se mitiga con hardening del
+contenedor (no root, sin shell/pkg manager, `read_only`, `cap_drop: ALL`,
+`no-new-privileges`) y límites de entrada. **Acción:** re-escanear al actualizar
+el digest de la base y cerrar/actualizar este riesgo cuando el paquete quede
+corregido. Detalle: `tasks/plan-markdown.md` (RA-1).
 
 El `docker-compose.yml` declara el mismo contrato en el despliegue del servicio
 `extract`: `read_only: true`, `cap_drop: ["ALL"]` y

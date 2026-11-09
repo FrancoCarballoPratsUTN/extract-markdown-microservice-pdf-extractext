@@ -1201,6 +1201,22 @@ Se registran para que no se reabran sin decisión explícita:
    builds `test`/`runtime`, `docker compose config`, smoke real e `inspect`
    sobre las cinco réplicas (T41).
 
+## 13. Riesgos aceptados
+
+### RA-1 — CVE-2026-84243 en `glibc` de la imagen base (aceptado, 2026-11-09)
+
+| Campo | Valor |
+|---|---|
+| CVE | CVE-2026-84243 (High) |
+| Paquete | `glibc 2.44-r14` (`apk`, Wolfi) |
+| Imagen afectada | `cgr.dev/chainguard/glibc-dynamic@sha256:aab5cd0b4cc5edd9c87b6e7aa9ddaa3fb6ffcec559b9e5473c55bbc937b65399` (runtime) |
+| Dónde vive | Capa de sistema operativo de la imagen base; **no** en código Go del servicio ni en el binding `pdf_oxide` |
+| Exposición en este servicio | El binario se compila con `CGO_ENABLED=0`, pero `libpdf_oxide.so` (Rust, glibc) se carga en tiempo de ejecución con `purego`/`dlopen`. El proceso depende de la glibc de la imagen base, por lo que la CVE afecta al runtime del contenedor |
+| Por qué no se “fixea” en código | No hay cambio de aplicación que parche glibc. El fix debe llegar en un paquete/digest nuevo de la imagen base |
+| Estado | **Aceptado** mientras no exista un digest actualizado de `cgr.dev/chainguard/glibc-dynamic` que incluya el paquete corregido |
+| Controles compensatorios | Runtime sin shell ni gestor de paquetes; `USER 65532:65532`; `read_only: true`; `cap_drop: ["ALL"]`; `security_opt: ["no-new-privileges:true"]` (verificado en compose/inspect); límites de entrada (`MAX_UPLOAD_MB`, `MAX_PAGES`, validación/drain multipart); probe de arranque y `recover()` en el adaptador |
+| Disparador de revisión | En cada actualización de la base (nuevo digest), re-escanear la imagen runtime con el mismo scanner; si el CVE desaparece o cambia de severidad/estado, actualizar o cerrar este riesgo. Revisión periódica aunque no haya cambios de código |
+
 ## 12. Plan adicional — frontera de configuración
 
 ### Objetivo
