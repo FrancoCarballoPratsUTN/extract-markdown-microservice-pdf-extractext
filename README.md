@@ -57,18 +57,27 @@ no permite cargar la biblioteca nativa. Las sondas externas pueden consultar
 `/healthz` y el proceso mantiene `USER 65532:65532`.
 
 El `docker-compose.yml` declara el mismo contrato en el despliegue del servicio
-`app`: `read_only: true`, `cap_drop: ["ALL"]` y
+`extract`: `read_only: true`, `cap_drop: ["ALL"]` y
 `security_opt: ["no-new-privileges:true"]`. El servidor no escribe en disco ni
 necesita capacidades, así que no se añade `tmpfs` (la extracción real con PDF se
 verificó con el rootfs en sólo lectura). Traefik queda fuera porque monta el
 socket de Docker. Se comprueba con `docker inspect` (`ReadonlyRootfs`,
 `CapDrop`, `SecurityOpt`).
 
-Para usar una instancia existente de Traefik:
+Para usar el Traefik compartido de `Documents/Services` (red externa `mired`,
+entrada `https` con TLS para `*.universidad.localhost`):
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.traefik.yml up --build
+docker compose -f docker-compose.traefik.yml up --build -d
+curl --cacert "$(mkcert -CAROOT)/rootCA.pem" \
+  https://extract.universidad.localhost/healthz
 ```
+
+`docker-compose.traefik.yml` es un compose autónomo (no un override): declara el
+servicio completo con cinco réplicas, se une a la red ya existente `mired` y
+publica el router por labels. No crea redes ni toca la configuración del Traefik
+compartido. El healthcheck activo de Traefik consulta `/healthz` en cada réplica
+para no enrutar a instancias caídas.
 
 La justificación de la arquitectura, las mediciones y el análisis comparativo
 están en **[INFORME.md](INFORME.md)**.

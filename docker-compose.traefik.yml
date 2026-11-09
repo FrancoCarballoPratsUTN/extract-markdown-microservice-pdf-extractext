@@ -1,12 +1,72 @@
+# Despliegue autónomo del microservicio Extract detrás del Traefik compartido.
+#
+# Este archivo NO es un override de docker-compose.yml: declara el servicio
+# completo (build, réplicas, hardening, configuración y labels de Traefik) para
+# publicarlo en el Traefik que ya corre en la red externa `mired`
+# (Documents/Services). No crea redes ni modifica la configuración de Traefik.
+#
+# Uso:
+#     docker compose -f docker-compose.traefik.yml up --build -d
+#     curl --cacert "$(mkcert -CAROOT)/rootCA.pem" \
+#       https://extract.universidad.localhost/healthz
+#
+# Requisitos:
+#   - Red Docker externa `mired` y Traefik compartido de Documents/Services.
+#   - Certificado de mkcert para `*.universidad.localhost` cargado en Traefik.
+#   - Archivo `.env` opcional junto a este compose (misma configuración que
+#     docker-compose.yml).
+
+name: pdf-extractext-extract
+
 services:
-  app:
+  extract:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # El runtime distroless ya es no-root y no escribe en disco; se declara el
+    # contrato mínimo en el despliegue además de en la imagen.
+    read_only: true
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    deploy:
+      replicas: 5
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # La ruta del .env es del host y no existe dentro del contenedor; la
+      # imagen fija la suya. environment tiene precedencia sobre env_file.
+      - PDF_OXIDE_LIB_PATH=/opt/pdf_oxide/libpdf_oxide.so
+    # Por encima del SHUTDOWN_TIMEOUT: primero el servicio drena los trabajos
+    # en vuelo y sólo después Docker lo mata.
+    stop_grace_period: ${STOP_GRACE_PERIOD:-45s}
     labels:
+      - "traefik.enable=true"
       - "traefik.docker.network=mired"
+      - "traefik.http.routers.extract.rule=Host(`extract.universidad.localhost`)"
       - "traefik.http.routers.extract.entrypoints=https"
       - "traefik.http.routers.extract.tls=true"
+      - "traefik.http.services.extract.loadbalancer.server.port=${PORT:-8080}"
+      # Healthcheck activo de Traefik sobre las 5 réplicas: sólo se enruta a
+      # las instancias que responden /healthz. La imagen distroless no trae
+      # wget/curl, por eso la sonda vive en Traefik y no en un HEALTHCHECK.
+      - "traefik.http.services.extract.loadbalancer.healthcheck.path=/healthz"
+      - "traefik.http.services.extract.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.extract.loadbalancer.healthcheck.timeout=3s"
     networks:
       - mired
+    restart: unless-stopped
 
 networks:
   mired:
     external: true
+    name: mired

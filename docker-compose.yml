@@ -14,7 +14,7 @@ services:
       - edge
     restart: unless-stopped
 
-  app:
+  extract:
     build:
       context: .
       dockerfile: Dockerfile
