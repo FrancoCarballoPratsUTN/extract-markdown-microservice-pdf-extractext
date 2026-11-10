@@ -57,7 +57,9 @@ docker compose -f docker-compose.traefik.yml up --build
 
 Las variables principales (`MAX_PAGES`, `MAX_UPLOAD_MB`, `MAX_WORKERS`,
 `QUEUE_SIZE`, `QUEUE_MAX_MB`, `PDF_OXIDE_LIB_PATH`) están documentadas en el
-`README`.
+`README`. Los defaults de concurrencia y cola son los medidos para `cpus: 1.0`
+por réplica: `MAX_WORKERS=2` y `QUEUE_SIZE=56` (58 trabajos en vuelo por
+réplica).
 
 ## Pruebas
 

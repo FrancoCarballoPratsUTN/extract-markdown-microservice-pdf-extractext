@@ -15,6 +15,22 @@ func TestLoadDefaultsToMaxWorkers(t *testing.T) {
 	}
 }
 
+// La configuración óptima medida (2 workers y 56 de cola) es parte del
+// contrato: la documentación y el despliegue la presentan como default.
+func TestLoadDefaultsToTheMeasuredOptimum(t *testing.T) {
+	t.Setenv("MAX_WORKERS", "")
+	t.Setenv("QUEUE_SIZE", "")
+
+	cfg := loadOrFail(t)
+
+	if cfg.MaxWorkers != 2 {
+		t.Errorf("MaxWorkers = %d, want 2", cfg.MaxWorkers)
+	}
+	if cfg.QueueSize != 56 {
+		t.Errorf("QueueSize = %d, want 56", cfg.QueueSize)
+	}
+}
+
 func TestLoadDefaultsToMaxPagesLimit(t *testing.T) {
 	t.Setenv("MAX_PAGES", "")
 

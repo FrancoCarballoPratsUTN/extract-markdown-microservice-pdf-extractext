@@ -118,10 +118,10 @@ docker build -t pdf-extract-md .
 docker run --rm -p 127.0.0.1:8080:8080 pdf-extract-md
 ```
 
-La imagen es autónoma (incluye la biblioteca) y arranca con los valores
-predeterminados. No ejecutarla a la vez que Compose: ambos publican el puerto
-8080. Los límites se pasan con `-e`, por ejemplo
-`-e MAX_WORKERS=2 -e QUEUE_SIZE=56`.
+La imagen es autónoma (incluye la biblioteca) y arranca con los defaults
+medidos (`MAX_WORKERS=2`, `QUEUE_SIZE=56`). No ejecutarla a la vez que Compose:
+ambos publican el puerto 8080. Para sobrescribir los límites, usar `-e`, por
+ejemplo `-e MAX_WORKERS=4 -e QUEUE_SIZE=32`.
 
 #### Binario local (sin Docker)
 
@@ -231,8 +231,8 @@ make test-integration
 | `PORT` | `8080` | Puerto de escucha |
 | `MAX_UPLOAD_MB` | `50` | Tope del documento PDF; el sobre multipart admite hasta `MAX_UPLOAD_MB` + 8 KiB |
 | `MAX_PAGES` | `1000` | Tope de páginas por documento (`0` = sin límite) |
-| `MAX_WORKERS` | `10` | Extracciones concurrentes por réplica |
-| `QUEUE_SIZE` | `16` | Capacidad de la cola por réplica |
+| `MAX_WORKERS` | `2` | Extracciones concurrentes por réplica |
+| `QUEUE_SIZE` | `56` | Capacidad de la cola por réplica |
 | `QUEUE_MAX_MB` | `256` | Límite de bytes de trabajos activos y pendientes |
 | `READ_TIMEOUT` / `WRITE_TIMEOUT` | `30` | Tiempo de espera en segundos |
 | `SHUTDOWN_TIMEOUT` | `35` | Deadline (segundos) para dejar de aceptar y drenar la cola al apagar |
@@ -251,11 +251,11 @@ make test-integration
 | `CONSUL_SERVICE_TAGS` | — | Tags separados por `;`; las comas forman parte del tag |
 
 Los valores de la tabla son los que aplica `internal/config` cuando la variable
-no llega; coinciden con `.env.example` y con el arranque de Compose sin `.env`
-(en cuanto a configuración del proceso, el compose sólo fija
-`PDF_OXIDE_LIB_PATH` y el margen `STOP_GRACE_PERIOD`). Un valor inválido aborta
-el arranque (fail-fast) en vez de caer a un default. `LOG_LEVEL`/`LOG_FORMAT`
-los lee `internal/logging` y también son *fail-fast*.
+no llega. `MAX_WORKERS` y `QUEUE_SIZE` coinciden además con `.env.example`, con
+el `ENV` de la imagen y con el compose, que los fija como `${MAX_WORKERS:-2}` y
+`${QUEUE_SIZE:-56}` para que un `.env` pueda sobreescribirlos. Un valor inválido
+aborta el arranque (fail-fast) en vez de caer a un default.
+`LOG_LEVEL`/`LOG_FORMAT` los lee `internal/logging` y también son *fail-fast*.
 
 `SHUTDOWN_TIMEOUT` es el deadline interno del servicio. `STOP_GRACE_PERIOD`
 (`45s` por defecto) sólo lo usa Compose como margen de Docker: debe quedar por
@@ -266,11 +266,11 @@ encima de `SHUTDOWN_TIMEOUT` para que el proceso drene antes de que lo maten.
 8 KiB (boundaries y cabeceras), pero la parte `file` sigue acotada por
 `MAX_UPLOAD_MB`.
 
-`MAX_WORKERS` se ajusta a la cuota de CPU de cada réplica. Con la cuota medida
-(`cpus: 1.0`), dos trabajadores superan a uno y a cuatro en rendimiento; con los
-defaults de 10 trabajadores el servicio también arranca, pero retiene más
-memoria y devuelve más `503`. La admisión máxima por réplica es
-`MAX_WORKERS + QUEUE_SIZE`.
+`MAX_WORKERS` se ajusta a la cuota de CPU de cada réplica. Con la cuota del
+despliegue (`cpus: 1.0`), dos trabajadores superan a uno y a cuatro en
+rendimiento; el antiguo default de 10 también arrancaba, pero retenía mucha más
+memoria y devolvía más `503` sin ganar throughput. La admisión máxima por
+réplica es `MAX_WORKERS + QUEUE_SIZE` = 58.
 
 Cuando `CONSUL_ENABLED=true`, `CONSUL_HTTP_ADDR`, `CONSUL_HTTP_TOKEN` y
 `CONSUL_KV_PREFIX` son obligatorios. `CONSUL_SERVICE_TAGS` usa `;` como único
@@ -366,11 +366,11 @@ requerir configurar `SSL_CERT_FILE` o dejar el modo inseguro de la herramienta.
 
 Con cinco réplicas (`cpus: 1.0`), `MAX_WORKERS=2` y `QUEUE_SIZE=56`, el perfil
 de k6 (100 VUs) midió ~15 req/s con **0,00 % de errores** y la carga fija de
-Vegeta (50 req/s) sirvió el **100 % de las peticiones** con p50 ~2,4 s. Esas
-cotas no son los defaults del código: se configuran en `.env` (o con `-e` al
-correr un contenedor) para reproducir la medición. La extracción con `pdf_oxide` cuesta
-~4× más CPU por petición que la versión anterior con PDFium (~230 ms contra
-~52 ms), así que con la cuota total de 5 CPUs el techo de throughput queda en
-~15–20 req/s: CPU-bound, no de cola ni de transporte. El informe técnico
-contiene las tablas completas, las condiciones de medición y el análisis del
-cuello de botella.
+Vegeta (50 req/s) sirvió el **100 % de las peticiones** con p50 ~2,4 s. Esa es
+la configuración por defecto del código, de la imagen y del compose; puede
+sobrescribirse en `.env` (o con `-e` al correr un contenedor). La extracción
+con `pdf_oxide` cuesta ~4× más CPU por petición que la versión anterior con
+PDFium (~230 ms contra ~52 ms), así que con la cuota total de 5 CPUs el techo
+de throughput queda en ~15–20 req/s: CPU-bound, no de cola ni de transporte.
+El informe técnico contiene las tablas completas, las condiciones de medición y
+el análisis del cuello de botella.

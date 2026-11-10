@@ -46,6 +46,10 @@ services:
       # La ruta del .env es del host y no existe dentro del contenedor; la
       # imagen fija la suya. environment tiene precedencia sobre env_file.
       - PDF_OXIDE_LIB_PATH=/opt/pdf_oxide/libpdf_oxide.so
+      # Default medido con cpus: 1.0 por réplica. `${VAR:-default}` se interpola
+      # desde .env, así que un .env puede sobreescribir estos valores.
+      - MAX_WORKERS=${MAX_WORKERS:-2}
+      - QUEUE_SIZE=${QUEUE_SIZE:-56}
     # Por encima del SHUTDOWN_TIMEOUT: primero el servicio drena los trabajos
     # en vuelo y sólo después Docker lo mata.
     stop_grace_period: ${STOP_GRACE_PERIOD:-45s}

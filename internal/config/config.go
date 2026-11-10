@@ -7,10 +7,13 @@ import (
 )
 
 const (
-	defaultPort            = "8080"
-	defaultMaxUploadMB     = 50
-	defaultMaxWorkers      = 10
-	defaultQueueSize       = 16
+	defaultPort        = "8080"
+	defaultMaxUploadMB = 50
+	// 2 workers y 56 de cola son el óptimo medido con la cuota del despliegue
+	// (cpus: 1.0 por réplica): mismo throughput, sin 503 y la mitad de memoria
+	// que con 10/16. Ver INFORME.md (§4.2 y §5.2).
+	defaultMaxWorkers      = 2
+	defaultQueueSize       = 56
 	defaultQueueMaxMB      = 256
 	defaultReadTimeout     = 30
 	defaultWriteTimeout    = 30

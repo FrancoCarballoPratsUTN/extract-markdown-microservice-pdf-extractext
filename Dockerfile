@@ -53,6 +53,12 @@ COPY --from=builder /out/server /app/server
 
 ENV PDF_OXIDE_LIB_PATH=/opt/pdf_oxide/libpdf_oxide.so
 
+# Óptimo medido para la cuota del despliegue (cpus: 1.0 por réplica). Se fija
+# también en la imagen para que `docker run` sin `-e` use la misma configuración
+# que el compose y el binario local.
+ENV MAX_WORKERS=2 \
+    QUEUE_SIZE=56
+
 WORKDIR /app
 EXPOSE 8080
 USER 65532:65532

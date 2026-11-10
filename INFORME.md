@@ -164,7 +164,7 @@ puerto hacia todas.
 | --- | --- | --- |
 | `pdf_oxide` in-process (purego) | Worker en proceso separado con RPC (versión anterior, `go-plugin`) o cgo directo | El core es Rust (memoria segura), no C: el fallo que motivó el proceso separado ya no aplica. `purego` + `CGO_ENABLED=0` elimina binario worker, socket y pool de procesos. Protección equivalente en proceso: sentinels → 400/413, `recover()` → 500, probe de arranque fatal. |
 | Cola acotada por bytes y profundidad | Sin cola: `MAX_WORKERS` como único límite de admisión | Con 10 workers se midió 8,14 % de `503`. La cola convierte rechazo en latencia. |
-| `MAX_WORKERS=2` | 10 workers (valor por defecto del código) | Mismo throughput, el doble de errores y 986 MiB de memoria contra 584 MiB. |
+| `MAX_WORKERS=2` | 10 workers (valor por defecto del código en ese momento) | Mismo throughput, el doble de errores y 986 MiB de memoria contra 584 MiB. |
 | `QUEUE_SIZE=56` | 32 (mejor p50 del barrido) | 34 slots en vuelo por réplica no alcanzan como margen para el desequilibrio del proxy: 0,66 % de errores. |
 | Sin caché de extracciones | Cachear por hash de documento | Los cuatro PDFs del enunciado rotan entre 100 VUs; la tasa de acierto sería alta, pero el enunciado no la pide y falsearía la medición de concurrencia. |
 | HTTP simple en el edge por defecto | Requerir el proxy compartido y TLS | `docker compose up --build` fallaría en una máquina limpia que no tenga esa red ni sus certificados. |
@@ -422,6 +422,9 @@ QUEUE_MAX_MB=256   techo de memoria para trabajos en curso y encolados
 replicas=5         cpus: 1.0, memory: 1024M por réplica
 ```
 
+Estos son los defaults actuales de `internal/config`, del `ENV` de la imagen y de
+los compose. La sección 5.2 los compara contra los antiguos defaults (10/16).
+
 ---
 
 ## 5. Comparativa de métricas: antes y después
@@ -438,10 +441,11 @@ usó un diseño **A-B-A** —tres bloques de "antes", luego "después", luego "a
 vez— de modo que la deriva afecta a los dos bloques de A por igual y se cancela al
 comparar medianas.
 
-El "antes" son los **valores por defecto del código** (`MAX_WORKERS=10`,
-`QUEUE_SIZE=16`), que existían desde antes de este trabajo.
+El "antes" son los **valores por defecto del código en ese momento**
+(`MAX_WORKERS=10`, `QUEUE_SIZE=16`), que existían desde antes de este trabajo.
+Hoy el código, la imagen y el compose usan la configuración final (2/56).
 
-### 5.2 Resultados — configuración por defecto (10/16) frente a la final (2/56)
+### 5.2 Resultados — antigua configuración por defecto (10/16) frente a la final (2/56)
 
 | Métrica | Antes (10/16) — 6 corridas | Después (2/56) — 3 corridas | Cambio |
 | --- | ---: | ---: | ---: |
