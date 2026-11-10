@@ -654,10 +654,11 @@ Levanta cinco réplicas y su propio balanceador, y responde en
 preexistentes.
 
 Para enrutar por el proxy compartido de la máquina (Traefik con TLS y el dominio
-`*.universidad.localhost`), se superpone un override:
+`*.universidad.localhost`), se usa el compose autónomo de Traefik (no es un
+override de `docker-compose.yml`):
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.traefik.yml up --build
+docker compose -f docker-compose.traefik.yml up --build
 ```
 
 ### 6.2 Prueba de pico (k6)

@@ -41,7 +41,7 @@ negocio puede probarse sin depender de HTTP ni del motor de PDF.
 La imagen Docker usa varias etapas: instala `libpdf_oxide` con el installer
 pineado, compila el servidor (`CGO_ENABLED=0`), ejecuta las pruebas con la
 librería real y construye una imagen final mínima sobre
-`gcr.io/distroless/base-debian13` (digest fijado), sin shell, con
+`cgr.dev/chainguard/glibc-dynamic` (Wolfi/glibc, digest fijado), sin shell, con
 `USER 65532:65532` y sin `HEALTHCHECK` interno.
 
 ```bash
@@ -52,7 +52,7 @@ La composición local inicia cinco réplicas detrás de Traefik y publica
 `127.0.0.1:8080`. Para usar una instancia de Traefik existente:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.traefik.yml up --build
+docker compose -f docker-compose.traefik.yml up --build
 ```
 
 Las variables principales (`MAX_PAGES`, `MAX_UPLOAD_MB`, `MAX_WORKERS`,
